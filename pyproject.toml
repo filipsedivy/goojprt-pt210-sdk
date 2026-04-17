@@ -1,0 +1,7 @@
+[project]
+name = "goojprt-pt210-sdk"
+version = "0.1.0"
+description = "Unofficial Python SDK for the GOOJPRT PT-210 thermal printer (BLE / SPP)"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
