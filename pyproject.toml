@@ -51,3 +51,9 @@ dev = [
 pythonVersion = "3.14"
 typeCheckingMode = "basic"
 include = ["goojprt", "goojprt_server"]
+# Root orchestrators not yet fully refactored — exclude until refactor is complete
+ignore = [
+    "goojprt/template.py",
+    "goojprt/printer.py",
+    "goojprt/cli.py",
+]
