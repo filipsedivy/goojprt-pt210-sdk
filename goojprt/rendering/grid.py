@@ -74,7 +74,7 @@ def render_grid(
             bb = probe_draw.textbbox((0, 0), text, font=font)
             max_text_h = max(max_text_h, bb[3] - bb[1])
 
-    render_height = max_text_h + 2 * pad
+    render_height = int(max_text_h) + 2 * pad
 
     # Convert relative widths to pixel widths.
     total_w = sum(col.get("width", 1) for col in columns) or 1
@@ -127,4 +127,4 @@ def render_grid(
 
     if dither:
         return img.convert("1")
-    return img.point(lambda p: 0 if p < threshold else 255).convert("1")
+    return img.point(lambda p: 0 if p < threshold else 255).convert("1")  # type: ignore[arg-type]
