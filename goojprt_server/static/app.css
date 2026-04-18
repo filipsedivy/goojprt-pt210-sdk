@@ -1,0 +1,85 @@
+:root {
+  --fg: #222; --muted: #666;
+  --ok: #2a7; --bad: #c33; --warn: #b85;
+  --bg: #fafafa; --surface: #fff; --border: #ddd;
+  --accent: #06a;
+}
+* { box-sizing: border-box; }
+body {
+  font: 14px/1.45 system-ui, -apple-system, sans-serif;
+  color: var(--fg); background: var(--bg);
+  margin: 0; padding: 1rem;
+  max-width: 720px; margin-inline: auto;
+}
+
+header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 1rem; margin-bottom: .5rem;
+}
+header h1 { font-size: 1.1rem; margin: 0; }
+
+.status { display: flex; gap: 1rem; color: var(--muted); align-items: baseline; }
+.pill {
+  padding: .15rem .6rem; border-radius: 999px;
+  font-weight: 600; font-size: .85rem;
+  transition: background-color .25s ease, color .25s ease;
+}
+.pill-ok  { background: #e6f7ee; color: var(--ok); }
+.pill-bad { background: #fdecec; color: var(--bad); }
+
+details {
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: .5rem 1rem; margin: .5rem 0; background: var(--surface);
+}
+details[open] summary { font-weight: 600; }
+summary { cursor: pointer; }
+
+form { display: grid; gap: .5rem; padding: .5rem 0; }
+textarea, input[type=text], input:not([type]), input[type=number] {
+  width: 100%; font: inherit; padding: .4rem;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
+}
+fieldset { border: 1px solid var(--border); border-radius: 4px; padding: .35rem .75rem; }
+legend { padding: 0 .35rem; color: var(--muted); font-size: .85rem; }
+button {
+  padding: .5rem 1rem; background: var(--accent); color: #fff;
+  border: 0; border-radius: 4px; cursor: pointer;
+  transition: background-color .15s ease, opacity .15s ease;
+}
+button:hover:not(:disabled) { background: #048; }
+button:disabled { opacity: .5; cursor: wait; }
+
+/* ── Flash (inline toast that appears for ~3.5s) ─────────────── */
+.flash {
+  padding: .5rem 1rem; border-radius: 4px; margin: .25rem 0;
+  opacity: 0; max-height: 0; padding-block: 0;
+  overflow: hidden;
+  transition: opacity .2s ease, max-height .25s ease, padding-block .25s ease;
+}
+.flash-visible { opacity: 1; max-height: 4rem; padding-block: .5rem; }
+.flash-ok  { background: #e6f7ee; color: var(--ok); }
+.flash-bad { background: #fdecec; color: var(--bad); }
+
+/* ── Recent jobs table ───────────────────────────────────────── */
+.recent h2 { font-size: 1rem; display: flex; align-items: center; gap: .5rem; }
+table { width: 100%; border-collapse: collapse; background: var(--surface); }
+th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid #eee; }
+tbody tr { transition: background-color .3s ease; }
+tbody tr.row-done    td { color: var(--ok); }
+tbody tr.row-failed  td { color: var(--bad); }
+tbody tr.row-running td { color: var(--accent); font-weight: 500; }
+tbody tr.row-queued  td { color: var(--muted); }
+
+/* Live indicator — pulses briefly when the last poll succeeded,
+   turns warm-coloured while we're stale/failing. */
+.indicator {
+  display: inline-block; width: .55rem; height: .55rem; border-radius: 50%;
+  background: #cfcfcf; transition: background-color .2s ease;
+}
+.indicator-live  { background: var(--ok); box-shadow: 0 0 0 0 rgba(42,119,0,.5); animation: pulse 1s ease-out; }
+.indicator-stale { background: var(--warn); }
+
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(42,119,0,.6); }
+  100% { box-shadow: 0 0 0 8px rgba(42,119,0,0); }
+}

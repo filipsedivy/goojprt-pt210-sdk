@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div id="flash" class="flash{% if flash %} flash-{{ flash }} flash-visible{% endif %}" role="status" aria-live="polite">
+  {{ flash_msg or '' }}
+</div>
+
+<details open><summary>Text</summary>
+  <form method="post" action="/" data-print-type="text">
+    <input type="hidden" name="_type" value="text">
+    <textarea name="text" rows="8" required></textarea>
+    <label><input type="checkbox" name="bitmap"> Bitmap mode (diacritics)</label>
+    <fieldset>
+      <legend>Align</legend>
+      <label><input type="radio" name="align" value="left" checked> Left</label>
+      <label><input type="radio" name="align" value="center"> Center</label>
+      <label><input type="radio" name="align" value="right"> Right</label>
+    </fieldset>
+    <label><input type="checkbox" name="bold"> Bold</label>
+    <label>Feed after: <input type="number" name="feed_after" min="0" max="20" value="0"></label>
+    <button type="submit">Print</button>
+  </form>
+</details>
+
+<details><summary>QR</summary>
+  <form method="post" action="/" data-print-type="qr">
+    <input type="hidden" name="_type" value="qr">
+    <input name="data" required placeholder="https://…">
+    <label>Size <input type="number" name="size" min="1" max="16" value="6"></label>
+    <button type="submit">Print</button>
+  </form>
+</details>
+
+<details><summary>PDF417</summary>
+  <form method="post" action="/" data-print-type="pdf417">
+    <input type="hidden" name="_type" value="pdf417">
+    <input name="data" required>
+    <label>Columns <input type="number" name="columns" min="1" max="30" value="5"></label>
+    <button type="submit">Print</button>
+  </form>
+</details>
+
+<details><summary>Image</summary>
+  <form id="image-form" data-print-type="image">
+    <label>
+      File (JPEG / PNG / WEBP / BMP)
+      <input id="image-file" type="file" name="file" accept="image/*" required>
+    </label>
+
+    <div id="image-editor" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 200px;gap:.75rem;align-items:start">
+        <div>
+          <div style="font-size:.8rem;color:var(--muted);margin-bottom:.25rem">
+            B&amp;W preview — drag to select crop area
+          </div>
+          <canvas id="image-canvas" style="width:100%;border:1px solid var(--border);border-radius:4px;cursor:crosshair;display:block"></canvas>
+        </div>
+        <div style="display:grid;gap:.5rem">
+
+          <div>
+            <div style="font-size:.8rem;color:var(--muted)">Rotate</div>
+            <div style="display:flex;gap:.25rem;margin-top:.2rem">
+              <button type="button" id="rotate-ccw">↺ 90°</button>
+              <button type="button" id="rotate-cw">↻ 90°</button>
+              <button type="button" id="rotate-180">180°</button>
+            </div>
+          </div>
+
+          <label>
+            Brightness <span id="brightness-val">1.0</span>
+            <input type="range" id="brightness" name="brightness" min="0.1" max="3" step="0.05" value="1">
+          </label>
+
+          <label>
+            Contrast <span id="contrast-val">1.0</span>
+            <input type="range" id="contrast" name="contrast" min="0.1" max="3" step="0.05" value="1">
+          </label>
+
+          <label id="threshold-label">
+            Threshold <span id="threshold-val">128</span>
+            <input type="range" id="threshold" name="threshold" min="0" max="255" step="1" value="128">
+          </label>
+
+          <label>
+            <input type="checkbox" id="dither" name="dither" checked>
+            Floyd–Steinberg dithering
+          </label>
+
+          <label>
+            Scale <span id="scale-val">100%</span>
+            <input type="range" id="scale" name="scale" min="0.1" max="1" step="0.01" value="1">
+          </label>
+
+          <fieldset>
+            <legend>Align</legend>
+            <label><input type="radio" name="align" value="left"> Left</label>
+            <label><input type="radio" name="align" value="center" checked> Center</label>
+            <label><input type="radio" name="align" value="right"> Right</label>
+          </fieldset>
+
+          <label>Feed after: <input type="number" name="feed_after" min="0" max="20" value="0"></label>
+
+          <button type="submit">Print</button>
+        </div>
+      </div>
+    </div>
+
+    <input type="hidden" name="rotate" id="rotate-val" value="0">
+    <input type="hidden" name="crop_x" id="crop_x" value="0">
+    <input type="hidden" name="crop_y" id="crop_y" value="0">
+    <input type="hidden" name="crop_w" id="crop_w" value="1">
+    <input type="hidden" name="crop_h" id="crop_h" value="1">
+  </form>
+</details>
+
+<details><summary>Feed</summary>
+  <form method="post" action="/" data-print-type="feed">
+    <input type="hidden" name="_type" value="feed">
+    <label>Lines <input type="number" name="lines" min="1" max="20" value="3"></label>
+    <button type="submit">Feed</button>
+  </form>
+</details>
+
+<section class="recent">
+  <h2>Recent jobs <span id="jobs-indicator" class="indicator" aria-hidden="true"></span></h2>
+  <table>
+    <thead><tr><th></th><th>ID</th><th>Type</th><th>Status</th><th>Duration</th></tr></thead>
+    <tbody id="jobs-tbody">
+    {% for job in recent %}
+      <tr class="row-{{ job.status }}" data-job-id="{{ job.id }}">
+        <td>{{ {'done':'✓','failed':'✗','running':'⋯','queued':'·'}[job.status] }}</td>
+        <td><code>{{ job.id }}</code></td>
+        <td>{{ job.type }}</td>
+        <td>{{ job.status }}</td>
+        <td>{{ job.duration_ms ~ 'ms' if job.duration_ms is not none else '—' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% endblock %}
