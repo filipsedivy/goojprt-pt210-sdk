@@ -26,5 +26,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra server --extra test
 
+      - name: Run type checks
+        run: uv run basedpyright
+
       - name: Run tests
         run: uv run pytest
