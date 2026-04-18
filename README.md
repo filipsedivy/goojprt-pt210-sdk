@@ -45,35 +45,57 @@ It was created to enable reliable programmatic printing — text, barcodes, QR c
 
 ## Installation
 
-**From PyPI (stable):**
+There are two variants of the package:
+
+| Variant | What you get | Install extra |
+|---------|-------------|---------------|
+| **SDK only** (default) | `goojprt` Python package + `goojprt` CLI | *(none)* |
+| **SDK + Server** | everything above + `goojprt-server` — a FastAPI HTTP print server with live dashboard and REST API | `[server]` |
+
+### pip
 
 ```bash
+# SDK only
 pip install goojprt-pt210-sdk
+
+# SDK + HTTP print server
+pip install "goojprt-pt210-sdk[server]"
 ```
 
-**With [uv](https://docs.astral.sh/uv/):**
+### uv
 
 ```bash
+# SDK only
 uv add goojprt-pt210-sdk
+
+# SDK + HTTP print server
+uv add "goojprt-pt210-sdk[server]"
 ```
 
-**Latest from GitHub (development):**
+### Latest from GitHub (development)
 
 ```bash
+# SDK only
 pip install git+https://github.com/filipseedy/goojprt-pt210-sdk.git
+
+# SDK + HTTP print server
+pip install "git+https://github.com/filipseedy/goojprt-pt210-sdk.git#egg=goojprt-pt210-sdk[server]"
 ```
 
-**Editable install for local development:**
+### Editable install for local development
 
 ```bash
 git clone https://github.com/filipseedy/goojprt-pt210-sdk.git
 cd goojprt-pt210-sdk
+
+# SDK only
 pip install -e .
+
+# SDK + HTTP print server
+pip install -e ".[server]"
 ```
 
-This installs the `goojprt` Python package and the `goojprt` CLI entry point.
-
-**Requirements:** Python 3.14+, `bleak` (BLE), `Pillow` (image/bitmap rendering), `pdf417` (PDF417 barcodes).
+**Requirements:** Python 3.14+. Core dependencies (`bleak`, `Pillow`, `pdf417`) are installed automatically. The `[server]` extra adds FastAPI, Uvicorn, Jinja2, Rich, and Pydantic.
 
 ---
 
