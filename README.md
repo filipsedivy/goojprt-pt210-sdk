@@ -45,8 +45,30 @@ It was created to enable reliable programmatic printing — text, barcodes, QR c
 
 ## Installation
 
+**From PyPI (stable):**
+
 ```bash
 pip install goojprt-pt210-sdk
+```
+
+**With [uv](https://docs.astral.sh/uv/):**
+
+```bash
+uv add goojprt-pt210-sdk
+```
+
+**Latest from GitHub (development):**
+
+```bash
+pip install git+https://github.com/filipseedy/goojprt-pt210-sdk.git
+```
+
+**Editable install for local development:**
+
+```bash
+git clone https://github.com/filipseedy/goojprt-pt210-sdk.git
+cd goojprt-pt210-sdk
+pip install -e .
 ```
 
 This installs the `goojprt` Python package and the `goojprt` CLI entry point.
