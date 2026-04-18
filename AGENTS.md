@@ -52,5 +52,5 @@ Pillow is imported lazily inside each renderer so the non-rendering parts of the
 
 ## Conventions
 
-- **Docstrings**: leaf modules (`commands`, `constants`, `enums`, `encoding`, `raster`, `rendering/*`, `transport/*`) are documented in English. Higher-level orchestrators (`printer.py`, `template.py`, `cli.py`) still have Czech docstrings and Czech `print()` output. This mixed style is intentional for now; match the surrounding file when editing.
+- **Language**: All docstrings, comments, variable names, function names, log/print messages, and any other text in the codebase must be written in English. Czech content in existing files (`printer.py`, `template.py`, `cli.py`, root-level stale modules) is legacy and should be migrated to English whenever those files are touched.
 - **`_print_template` re-export**: `__init__.py` re-exports `print_template` as `_print_template` for backward compatibility with an external caller (`pokladna_wizard.py`). Keep this alias.
