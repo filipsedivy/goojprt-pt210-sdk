@@ -40,7 +40,7 @@ def create_app(
     monitor=None,
     test_mode: bool = False,
 ) -> FastAPI:
-    settings = settings or Settings()  # reads env
+    settings = settings or Settings()  # type: ignore[call-arg]  # reads env vars
 
     if test_mode:
         app = FastAPI(title="GoojPrt PT-210 Print Server", lifespan=None)

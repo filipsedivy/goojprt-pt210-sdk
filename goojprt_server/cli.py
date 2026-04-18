@@ -172,7 +172,7 @@ def _prompt_choice(devices: list[dict]) -> str:
         show_choices=False,
         default=default,
     )
-    return devices[int(choice) - 1]["address"]
+    return devices[int(choice or 0) - 1]["address"]
 
 
 async def _run_wizard(timeout: float) -> str:

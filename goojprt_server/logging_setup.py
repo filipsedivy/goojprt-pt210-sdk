@@ -98,11 +98,11 @@ class _JsonFormatter(logging.Formatter):
             "msg": record.getMessage(),
         }
         if getattr(record, "job_id", None):
-            payload["job_id"] = record.job_id
+            payload["job_id"] = getattr(record, "job_id")
         if getattr(record, "request_id", None):
-            payload["request_id"] = record.request_id
+            payload["request_id"] = getattr(record, "request_id")
         if hasattr(record, "duration_ms"):
-            payload["duration_ms"] = record.duration_ms
+            payload["duration_ms"] = getattr(record, "duration_ms")
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
         return _json.dumps(payload, ensure_ascii=False)

@@ -32,15 +32,16 @@ def _build_form_payload(job_type: str, form: dict) -> dict:
             feed_after=int(form.get("feed_after") or 0),
         ).model_dump()
     if job_type == "grid":
-        widths = form.getlist("col_width[]") if hasattr(form, "getlist") else [form.get("col_width[]")]
-        texts = form.getlist("col_text[]") if hasattr(form, "getlist") else [form.get("col_text[]")]
-        aligns = form.getlist("col_align[]") if hasattr(form, "getlist") else [form.get("col_align[]")]
+        _gl = getattr(form, "getlist", None)
+        widths = _gl("col_width[]") if _gl else [form.get("col_width[]")]  # type: ignore[arg-type]
+        texts = _gl("col_text[]") if _gl else [form.get("col_text[]")]  # type: ignore[arg-type]
+        aligns = _gl("col_align[]") if _gl else [form.get("col_align[]")]  # type: ignore[arg-type]
         columns = [
-            {"width": int(w), "align": a, "text": t}
+            {"width": int(w or 0), "align": a or "left", "text": t or ""}
             for w, a, t in zip(widths, aligns, texts)
         ]
         return PrintGridRequest(
-            columns=columns,
+            columns=columns,  # type: ignore[arg-type]
             font_size=int(form.get("font_size") or 22),
             dither=bool(form.get("dither")),
             feed_after=int(form.get("feed_after") or 0),
@@ -106,7 +107,7 @@ async def index(request: Request) -> HTMLResponse:
 async def submit(request: Request) -> RedirectResponse:
     form = dict(await request.form())
     job_type = form.pop("_type", None)
-    if job_type not in {"text", "qr", "pdf417", "feed"}:
+    if not isinstance(job_type, str) or job_type not in {"text", "qr", "pdf417", "feed"}:
         raise HTTPException(status_code=400, detail="unknown _type")
     payload = _build_form_payload(job_type, form)
     result = _enqueue(request.app.state.queue_state, job_type, payload)
