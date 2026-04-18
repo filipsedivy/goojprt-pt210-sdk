@@ -79,9 +79,17 @@ class PrintEkgRequest(BaseModel):
     amplitude: float = Field(0.82, ge=0.1, le=1.0)
     portrait: bool = False
     px_per_beat: int = Field(240, ge=60, le=600)
+    feed_after: int = Field(0, ge=0, le=20)
+
+
+class GridColumn(BaseModel):
+    width: int = Field(..., ge=1, le=384)
+    align: Literal["left", "center", "right"] = "left"
+    text: str
 
 
 class PrintGridRequest(BaseModel):
-    columns: list[dict] = Field(..., min_length=1)
+    columns: list[GridColumn] = Field(..., min_length=1)
     font_size: int = Field(22, ge=8, le=64)
     dither: bool = False
+    feed_after: int = Field(0, ge=0, le=20)

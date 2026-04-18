@@ -14,6 +14,8 @@ from goojprt_server.models import (
     FeedRequest,
     JobAcceptedResponse,
     JobResponse,
+    PrintEkgRequest,
+    PrintGridRequest,
     PrintPdf417Request,
     PrintQrRequest,
     PrintTextRequest,
@@ -66,6 +68,16 @@ async def print_qr(body: PrintQrRequest, request: Request) -> JobAcceptedRespons
 @router.post("/print/pdf417", status_code=202, response_model=JobAcceptedResponse)
 async def print_pdf417(body: PrintPdf417Request, request: Request) -> JobAcceptedResponse:
     return _enqueue(_qs(request), "pdf417", body.model_dump())
+
+
+@router.post("/print/ekg", status_code=202, response_model=JobAcceptedResponse)
+async def print_ekg(body: PrintEkgRequest, request: Request) -> JobAcceptedResponse:
+    return _enqueue(_qs(request), "ekg", body.model_dump())
+
+
+@router.post("/print/grid", status_code=202, response_model=JobAcceptedResponse)
+async def print_grid(body: PrintGridRequest, request: Request) -> JobAcceptedResponse:
+    return _enqueue(_qs(request), "grid", body.model_dump())
 
 
 @router.post("/feed", status_code=202, response_model=JobAcceptedResponse)

@@ -105,6 +105,24 @@ async def dispatch(printer, job: Job) -> None:
         if p.get("feed_after", 0) > 0:
             await printer.feed(lines=p["feed_after"])
 
+    elif job.type == "ekg":
+        await printer.print_ekg(
+            beats=p.get("beats", 4),
+            height_px=p.get("height_px", 160),
+            line_width=p.get("line_width", 2),
+            grid=p.get("grid", True),
+            amplitude=p.get("amplitude", 0.82),
+            portrait=p.get("portrait", False),
+            px_per_beat=p.get("px_per_beat", 240),
+        )
+
+    elif job.type == "grid":
+        await printer.print_grid(
+            columns=p["columns"],
+            font_size=p.get("font_size", 22),
+            dither=p.get("dither", False),
+        )
+
     else:
         raise ValueError(f"unknown job type: {job.type}")
 
