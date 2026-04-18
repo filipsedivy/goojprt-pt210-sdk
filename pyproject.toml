@@ -1,6 +1,6 @@
 [project]
 name = "goojprt-pt210-sdk"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Unofficial Python SDK for the GOOJPRT PT-210 thermal printer (BLE / SPP)"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -33,8 +33,11 @@ docs = [
 goojprt = "goojprt.cli:main"
 goojprt-server = "goojprt_server.cli:main"
 
+[tool.hatch.version]
+source = "vcs"
+
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
@@ -47,6 +50,7 @@ testpaths = ["tests"]
 [dependency-groups]
 dev = [
     "basedpyright>=1.39.2",
+    "hatch-vcs>=0.5.0",
     "numpy>=2.4.4",
 ]
 
