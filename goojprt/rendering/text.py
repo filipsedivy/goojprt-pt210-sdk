@@ -11,7 +11,7 @@ def render_text_image(
     font_path: str | None = None,
     line_spacing: int = 6,
     padding: int = 8,
-    align: "Align" = None,
+    align: "Align | None" = None,
     supersample: int = 3,
     dither: bool = True,
     threshold: int = 140,
@@ -102,7 +102,7 @@ def render_text_image(
             x = (render_width - lw) // 2
         else:                 # RIGHT
             x = render_width - lw - pad
-        draw.text((x, y), line, font=font, fill=0)
+        draw.text((int(x), int(y)), line, font=font, fill=0)
         y += lh + sp
 
     # Downsample to the print head width — LANCZOS is the best choice here.
@@ -126,4 +126,4 @@ def render_text_image(
         # producing a dot pattern that preserves the antialiased look.
         return img.convert("1")
     # Pure threshold: razor-sharp edges with zero noise around the glyphs.
-    return img.point(lambda p: 0 if p < threshold else 255).convert("1")
+    return img.point(lambda p: 0 if p < threshold else 255).convert("1")  # type: ignore[arg-type]

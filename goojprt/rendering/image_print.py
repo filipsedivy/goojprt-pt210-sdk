@@ -47,7 +47,7 @@ def prepare_image(
     w, h = img.size
     target_w = max(1, int(scale * w))
     target_h = max(1, int(h * target_w / w))
-    img = img.resize((target_w, target_h), Image.LANCZOS)
+    img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
     if brightness != 1.0:
         img = ImageEnhance.Brightness(img).enhance(brightness)
