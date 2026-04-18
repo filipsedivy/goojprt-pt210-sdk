@@ -43,5 +43,11 @@ testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
+    "basedpyright>=1.39.2",
     "numpy>=2.4.4",
 ]
+
+[tool.basedpyright]
+pythonVersion = "3.14"
+typeCheckingMode = "basic"
+include = ["goojprt", "goojprt_server"]
