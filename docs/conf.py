@@ -3,6 +3,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 project = "goojprt-pt210-sdk"
 author = "Filip Sedivy"
+copyright = "2026, Filip Sedivy"
 release = "0.1.0"
 
 extensions = [
