@@ -98,6 +98,7 @@ class BleTransport:
         :returns: UUID of the write characteristic, or ``None`` when none
             is found.
         """
+        assert self._client is not None
         write_char = None
         for service in self._client.services:
             for char in service.characteristics:
@@ -156,6 +157,8 @@ class BleTransport:
         """
         if not self.is_connected:
             raise RuntimeError("BLE transport is not connected.")
+        assert self._client is not None
+        assert self._write_char is not None
         for i in range(0, len(data), self.CHUNK_SIZE):
             chunk = data[i : i + self.CHUNK_SIZE]
             await self._client.write_gatt_char(
@@ -194,4 +197,5 @@ class BleTransport:
         """
         if not self.is_connected:
             raise RuntimeError("BLE transport is not connected.")
-        return await self._client.read_gatt_char(uuid)
+        assert self._client is not None
+        return bytes(await self._client.read_gatt_char(uuid))

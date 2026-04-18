@@ -55,4 +55,5 @@ class SppTransport:
         """
         if not self.is_connected:
             raise RuntimeError("SPP transport is not connected.")
+        assert self._sock is not None
         self._sock.sendall(data)

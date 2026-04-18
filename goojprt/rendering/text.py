@@ -82,7 +82,7 @@ def render_text_image(
     line_dims: list[tuple[int, int]] = []
     for line in lines:
         bb = probe_draw.textbbox((0, 0), line or " ", font=font)
-        line_dims.append((bb[2] - bb[0], bb[3] - bb[1]))
+        line_dims.append((int(bb[2] - bb[0]), int(bb[3] - bb[1])))
 
     pad = padding * ss
     sp  = line_spacing * ss
