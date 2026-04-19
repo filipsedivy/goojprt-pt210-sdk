@@ -8,6 +8,7 @@
 > Reverse-engineered from packet captures, sweat, and a little bit of thermal paper.
 
 [![Powered by GitHub Copilot](https://img.shields.io/badge/Powered%20by-GitHub%20Copilot-24292e?logo=githubcopilot&logoColor=white)](https://github.com/features/copilot)
+[![codecov](https://codecov.io/github/filipsedivy/goojprt-pt210-sdk/graph/badge.svg?token=27CNTLK29B)](https://codecov.io/github/filipsedivy/goojprt-pt210-sdk)
 [![AIDD](https://img.shields.io/badge/Built%20with-AIDD-6f42c1)](https://en.wikipedia.org/wiki/Generative_artificial_intelligence)
 [![PyPI](https://img.shields.io/pypi/v/goojprt-pt210-sdk)](https://pypi.org/project/goojprt-pt210-sdk/)
 [![Docs](https://img.shields.io/badge/docs-readthedocs-blue)](https://goojprt-pt210-sdk.readthedocs.io)
