@@ -169,17 +169,6 @@ class BleTransport:
             )
             await asyncio.sleep(self.CHUNK_DELAY)
 
-    async def write_image_data(self, data: bytes, rows: int) -> None:
-        """Send raster data followed by a throttle proportional to image height.
-
-        After the final chunk, sleeps ``max(0.3, rows * 0.002)`` seconds
-        so the printer's internal queue can drain before the next command
-        is issued (``write-without-response`` does not provide flow
-        control on its own).
-        """
-        await self.write(data)
-        await asyncio.sleep(max(0.3, rows * 0.002))
-
     async def write_raster_strip(self, data: bytes, rows: int = 24) -> None:
         """Send one raster strip using row-aligned 192-byte chunks.
 
