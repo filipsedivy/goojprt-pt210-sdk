@@ -5,6 +5,7 @@ the CPython ``socket`` module; BLE should be used there instead.
 """
 
 import socket
+import time
 from typing import Optional
 
 
@@ -18,6 +19,9 @@ class SppTransport:
     def __init__(self) -> None:
         """Create a disconnected transport; call :meth:`connect` to attach."""
         self._sock: Optional[socket.socket] = None
+
+    CHUNK_SIZE_RASTER = 192  # multiple of 48 (one raster row = 48 bytes)
+    CHUNK_DELAY = 0.04       # seconds between chunks, same as BleTransport
 
     def connect(self, address: str, port: int = 1) -> None:
         """Open an RFCOMM socket to the printer.
@@ -57,3 +61,21 @@ class SppTransport:
             raise RuntimeError("SPP transport is not connected.")
         assert self._sock is not None
         self._sock.sendall(data)
+
+    def write_raster_strip(self, data: bytes) -> None:
+        """Send one raster strip using row-aligned 192-byte chunks.
+
+        Mirrors :meth:`~goojprt.transport.ble.BleTransport.write_raster_strip`
+        but synchronous. Chunk boundaries are aligned to 48 bytes (one raster
+        row) to prevent pixel-shift artifacts on cheap printer firmware.
+
+        :param data: A complete ``GS v 0`` strip payload.
+        :raises RuntimeError: When the transport is not connected.
+        """
+        if not self.is_connected:
+            raise RuntimeError("SPP transport is not connected.")
+        assert self._sock is not None
+        for i in range(0, len(data), self.CHUNK_SIZE_RASTER):
+            chunk = data[i : i + self.CHUNK_SIZE_RASTER]
+            self._sock.send(chunk)
+            time.sleep(self.CHUNK_DELAY)
