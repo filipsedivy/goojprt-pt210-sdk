@@ -13,6 +13,39 @@ from goojprt.constants import PAPER_WIDTH_PX
 from goojprt.enums import Align
 
 
+def _normalize_to_paper_width(img):
+    """Crop or pad *img* (mode ``"1"``) to exactly ``PAPER_WIDTH_PX`` wide.
+
+    :param img: PIL image already converted to mode ``"1"``.
+    :returns: PIL image with ``width == PAPER_WIDTH_PX``.
+    """
+    from PIL import Image as PILImage
+
+    if img.width > PAPER_WIDTH_PX:
+        return img.crop((0, 0, PAPER_WIDTH_PX, img.height))
+    if img.width < PAPER_WIDTH_PX:
+        canvas = PILImage.new("1", (PAPER_WIDTH_PX, img.height), 1)
+        canvas.paste(img, (0, 0))
+        return canvas
+    return img
+
+
+def _pack_bits(band) -> bytes:
+    """Convert a 1-bit PIL image band to packed ESC/POS pixel bytes.
+
+    PIL mode ``"1"``: ``False``/``0`` = black, ``True``/``1`` = white.
+    ESC/POS: ``1`` bit = black, ``0`` bit = white, MSB = leftmost pixel.
+
+    :param band: PIL image in mode ``"1"``.
+    :returns: Packed bytes, one bit per pixel, MSB first.
+    """
+    import numpy as np
+
+    arr = np.asarray(band, dtype=np.uint8)
+    bits = (arr == 0).astype(np.uint8)
+    return np.packbits(bits, axis=1).tobytes()
+
+
 def image_to_raster(image) -> bytes:
     """Convert a PIL image into the ``GS v 0`` raster payload.
 
@@ -28,19 +61,7 @@ def image_to_raster(image) -> bytes:
     :returns: A full ESC/POS ``GS v 0`` command ready to send to the
         printer.
     """
-    from PIL import Image as PILImage
-
-    img = image.convert("1")
-
-    # Crop or pad to the print head width.
-    if img.width > PAPER_WIDTH_PX:
-        img = img.crop((0, 0, PAPER_WIDTH_PX, img.height))
-    elif img.width < PAPER_WIDTH_PX:
-        canvas = PILImage.new("1", (PAPER_WIDTH_PX, img.height), 1)
-        canvas.paste(img, (0, 0))
-        img = canvas
-
-    import numpy as np
+    img = _normalize_to_paper_width(image.convert("1"))
 
     width_bytes = PAPER_WIDTH_PX // 8
     result = bytearray()
@@ -51,12 +72,7 @@ def image_to_raster(image) -> bytes:
         width_bytes & 0xFF, (width_bytes >> 8) & 0xFF,
         img.height & 0xFF, (img.height >> 8) & 0xFF,
     ])
-
-    # PIL mode "1": False/0 = black, True/1 = white.
-    # ESC/POS: 1 bit = black, 0 bit = white, MSB = leftmost pixel.
-    arr = np.asarray(img, dtype=np.uint8)
-    bits = (arr == 0).astype(np.uint8)
-    result += np.packbits(bits, axis=1).tobytes()
+    result += _pack_bits(img)
 
     return bytes(result)
 
@@ -73,17 +89,7 @@ def image_to_raster_strips(image, strip_height: int = 24) -> list[bytes]:
         of pixel data per strip, safe for small printer buffers).
     :returns: List of ``GS v 0`` byte payloads, one per strip.
     """
-    from PIL import Image as PILImage
-    import numpy as np
-
-    img = image.convert("1")
-
-    if img.width > PAPER_WIDTH_PX:
-        img = img.crop((0, 0, PAPER_WIDTH_PX, img.height))
-    elif img.width < PAPER_WIDTH_PX:
-        canvas = PILImage.new("1", (PAPER_WIDTH_PX, img.height), 1)
-        canvas.paste(img, (0, 0))
-        img = canvas
+    img = _normalize_to_paper_width(image.convert("1"))
 
     width_bytes = PAPER_WIDTH_PX // 8
     total_rows = img.height
@@ -99,10 +105,7 @@ def image_to_raster_strips(image, strip_height: int = 24) -> list[bytes]:
             width_bytes & 0xFF, (width_bytes >> 8) & 0xFF,
             rows & 0xFF, (rows >> 8) & 0xFF,
         ])
-
-        arr = np.asarray(band, dtype=np.uint8)
-        bits = (arr == 0).astype(np.uint8)
-        payload += np.packbits(bits, axis=1).tobytes()
+        payload += _pack_bits(band)
 
         strips.append(bytes(payload))
 
