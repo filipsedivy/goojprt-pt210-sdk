@@ -46,6 +46,9 @@ class BleTransport:
     CHUNK_SIZE = 182
     #: Pause between chunks, covers the typical BLE connection interval (~30 ms).
     CHUNK_DELAY = 0.04
+    #: Row-aligned chunk size for raster data. Must be a multiple of 48
+    #: (PAPER_WIDTH_PX // 8) so chunk boundaries never split a raster row.
+    CHUNK_SIZE_RASTER = 192  # = 4 rows × 48 bytes
 
     def __init__(self, on_disconnect=None) -> None:
         """Create a disconnected transport; call :meth:`connect` to attach."""
@@ -176,6 +179,33 @@ class BleTransport:
         """
         await self.write(data)
         await asyncio.sleep(max(0.3, rows * 0.002))
+
+    async def write_raster_strip(self, data: bytes, rows: int = 24) -> None:
+        """Send one raster strip using row-aligned 192-byte chunks.
+
+        Chunk boundaries are aligned to ``CHUNK_SIZE_RASTER`` (a multiple of
+        48 bytes = one raster row) so the printer never receives a partial row
+        at a chunk boundary, which would cause a pixel-shift on the next line.
+        After all chunks are sent, sleeps ``max(0.05, rows * 0.002)`` seconds
+        so the paper motor can advance before the next strip is issued.
+
+        :param data: A complete ``GS v 0`` strip payload as returned by
+            :func:`~goojprt.raster.image_to_raster_strips`.
+        :param rows: Number of raster rows in this strip (used to compute
+            the post-strip throttle). Defaults to 24.
+        :raises RuntimeError: When the transport is not connected.
+        """
+        if not self.is_connected:
+            raise RuntimeError("BLE transport is not connected.")
+        assert self._client is not None
+        assert self._write_char is not None
+        for i in range(0, len(data), self.CHUNK_SIZE_RASTER):
+            chunk = data[i : i + self.CHUNK_SIZE_RASTER]
+            await self._client.write_gatt_char(
+                self._write_char, chunk, response=False
+            )
+            await asyncio.sleep(self.CHUNK_DELAY)
+        await asyncio.sleep(max(0.05, rows * 0.002))
 
     async def read_notify(self, timeout: float) -> bytes:
         """Return the current notify buffer after waiting ``timeout`` seconds.

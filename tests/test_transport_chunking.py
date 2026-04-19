@@ -59,6 +59,49 @@ async def test_ble_write_raster_strip_raises_when_disconnected():
         await t.write_raster_strip(b"\x00" * 48)
 
 
+@pytest.mark.asyncio
+async def test_ble_write_raster_strip_throttles_after_chunks():
+    """Verify post-strip sleep proportional to row count."""
+    t = _make_connected_transport()
+    t._client.write_gatt_char = AsyncMock()
+
+    sleep_calls = []
+
+    async def mock_sleep(duration):
+        sleep_calls.append(duration)
+
+    data = bytes(384)
+    with patch("asyncio.sleep", new=mock_sleep):
+        await t.write_raster_strip(data, rows=24)
+
+    # Should have 3 sleep calls: 2 between chunks + 1 post-strip
+    assert len(sleep_calls) == 3
+    # First two are CHUNK_DELAY
+    assert sleep_calls[0] == 0.04
+    assert sleep_calls[1] == 0.04
+    # Last is post-strip: max(0.05, 24 * 0.002) = max(0.05, 0.048) = 0.05
+    assert sleep_calls[2] == 0.05
+
+
+@pytest.mark.asyncio
+async def test_ble_write_raster_strip_throttle_scales_with_rows():
+    """Verify post-strip sleep scales when rows > 25."""
+    t = _make_connected_transport()
+    t._client.write_gatt_char = AsyncMock()
+
+    sleep_calls = []
+
+    async def mock_sleep(duration):
+        sleep_calls.append(duration)
+
+    data = bytes(384)
+    with patch("asyncio.sleep", new=mock_sleep):
+        await t.write_raster_strip(data, rows=50)
+
+    # Last sleep should be max(0.05, 50 * 0.002) = max(0.05, 0.1) = 0.1
+    assert sleep_calls[-1] == 0.1
+
+
 import time
 from goojprt.transport.spp import SppTransport
 
@@ -103,3 +146,46 @@ def test_spp_write_raster_strip_raises_when_disconnected():
     t = SppTransport()
     with pytest.raises(RuntimeError, match="not connected"):
         t.write_raster_strip(b"\x00" * 48)
+
+
+def test_spp_write_raster_strip_throttles_after_chunks():
+    """Verify post-strip sleep proportional to row count."""
+    t = _make_connected_spp()
+    sent_chunks = []
+    t._sock.send = lambda data: sent_chunks.append(bytes(data))
+
+    sleep_calls = []
+
+    def mock_sleep(duration):
+        sleep_calls.append(duration)
+
+    data = bytes(384)
+    with patch("time.sleep", new=mock_sleep):
+        t.write_raster_strip(data, rows=24)
+
+    # Should have 3 sleep calls: 2 between chunks + 1 post-strip
+    assert len(sleep_calls) == 3
+    # First two are CHUNK_DELAY
+    assert sleep_calls[0] == 0.04
+    assert sleep_calls[1] == 0.04
+    # Last is post-strip: max(0.05, 24 * 0.002) = max(0.05, 0.048) = 0.05
+    assert sleep_calls[2] == 0.05
+
+
+def test_spp_write_raster_strip_throttle_scales_with_rows():
+    """Verify post-strip sleep scales when rows > 25."""
+    t = _make_connected_spp()
+    sent_chunks = []
+    t._sock.send = lambda data: sent_chunks.append(bytes(data))
+
+    sleep_calls = []
+
+    def mock_sleep(duration):
+        sleep_calls.append(duration)
+
+    data = bytes(384)
+    with patch("time.sleep", new=mock_sleep):
+        t.write_raster_strip(data, rows=50)
+
+    # Last sleep should be max(0.05, 50 * 0.002) = max(0.05, 0.1) = 0.1
+    assert sleep_calls[-1] == 0.1

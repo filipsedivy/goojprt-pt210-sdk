@@ -159,16 +159,21 @@ class GoojPrtPT210:
         """Print a QR code over BLE using the native ESC/POS QR command."""
         await self._ble.write(commands.build_qr_block(data, size, align, error_correction))
 
-    async def print_image(self, image) -> None:
+    async def print_image(self, image, strip_height: int = 24) -> None:
         """Print a :class:`PIL.Image.Image` over BLE as an ESC/POS raster.
 
-        After the raster bytes are sent the call yields for roughly
-        ``2 ms`` per row (minimum ``300 ms``) so the BLE queue can drain
-        before the next command is issued.
+        The image is split into horizontal strips of ``strip_height`` rows and
+        sent as separate ``GS v 0`` commands. This keeps each payload small
+        enough to fit in the printer's limited buffer and aligns chunk
+        boundaries to raster row width, preventing pixel-shift artifacts.
+
+        :param image: PIL image in any mode.
+        :param strip_height: Rows per strip (default 24 → 1 152 bytes per
+            strip, safe for cheap hardware with small buffers).
         """
-        data = raster.image_to_raster(image)
-        rows = image.size[1] if hasattr(image, "size") else 384
-        await self._ble.write_image_data(data, rows)
+        for strip in raster.image_to_raster_strips(image, strip_height=strip_height):
+            rows = strip[6] | (strip[7] << 8)  # from GS v 0 header
+            await self._ble.write_raster_strip(strip, rows=rows)
 
     async def print_image_from_file(self, path: str) -> None:
         """Load an image from disk (via :func:`PIL.Image.open`) and print it."""
@@ -454,9 +459,15 @@ class GoojPrtPT210:
         """Print a QR code over SPP (shares :func:`commands.build_qr_block`)."""
         self._spp.write(commands.build_qr_block(data, size, align, error_correction))
 
-    def print_image_spp(self, image) -> None:
-        """Print a :class:`PIL.Image.Image` over SPP as an ESC/POS raster."""
-        self._spp.write(raster.image_to_raster(image))
+    def print_image_spp(self, image, strip_height: int = 24) -> None:
+        """Print a :class:`PIL.Image.Image` over SPP as an ESC/POS raster.
+
+        :param image: PIL image in any mode.
+        :param strip_height: Rows per strip (default 24).
+        """
+        for strip in raster.image_to_raster_strips(image, strip_height=strip_height):
+            rows = strip[6] | (strip[7] << 8)  # from GS v 0 header
+            self._spp.write_raster_strip(strip, rows=rows)
 
     def print_pdf417_spp(
         self,
