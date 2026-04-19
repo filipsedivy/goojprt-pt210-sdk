@@ -2,22 +2,29 @@
 
 This file provides guidance to coding agents when working with code in this repository.
 
-## Repository state: in-progress package refactor
+## Package layout
 
-The repo is mid-refactor from a flat layout into a proper `goojprt/` package. Both copies currently coexist:
+The refactor is complete. The codebase lives entirely inside the `goojprt/` package — `import goojprt` works.
 
-- **Root-level modules** (`commands.py`, `constants.py`, `encoding.py`, `enums.py`, `raster.py`, `rendering.py`, `transport.py`) — **stale**. Older versions with Czech docstrings. Do not edit these; treat them as the pre-refactor snapshot.
-- **`goojprt/` subpackage** (`commands.py`, `constants.py`, `encoding.py`, `enums.py`, `raster.py`, `rendering/`, `transport/`) — **authoritative**. Newer versions with English docstrings. The `rendering/` and `transport/` monoliths have been split into proper subpackages.
-- **Root orchestrators** (`__init__.py`, `__main__.py`, `cli.py`, `printer.py`, `template.py`) — import from `goojprt.*`, but haven't been moved *into* `goojprt/` yet. `goojprt/__init__.py` does not exist, so `import goojprt` currently fails. Completing the refactor means moving these five files into `goojprt/` and deleting the stale root copies.
-
-When asked to modify a module, edit the `goojprt/` copy. Before declaring a change done, consider whether the stale root copy should be removed rather than kept in sync.
+- **`goojprt/__init__.py`** — public API: `GoojPrtPT210`, `Align`, `TextSize`, `CodePage`, `PAPER_WIDTH_PX`, `print_template`, `_print_template`
+- **`goojprt/__main__.py`** — entry point for `python -m goojprt <address> [flags]`
+- **`goojprt/cli.py`** — argument parser (`build_parser`) and `main()`
+- **`goojprt/printer.py`** — `GoojPrtPT210` facade (BLE async + SPP sync API)
+- **`goojprt/template.py`** — TOML template engine (`print_template`)
+- **`goojprt/commands.py`** — pure ESC/POS byte builders (no I/O)
+- **`goojprt/constants.py`** — hardware constants (`PAPER_WIDTH_PX = 384`, BLE UUIDs)
+- **`goojprt/encoding.py`** — text-to-bytes helpers
+- **`goojprt/enums.py`** — `Align`, `CodePage`, `TextSize`
+- **`goojprt/raster.py`** — PIL→ESC/POS raster conversion (`image_to_raster`, `image_to_raster_strips`)
+- **`goojprt/rendering/`** — pure image renderers (text, grid, pdf417, ekg)
+- **`goojprt/transport/`** — `BleTransport` (async, bleak) and `SppTransport` (sync, RFCOMM)
 
 ## Runtime
 
 - **Python 3.14** required (`.python-version`, `pyproject.toml`).
 - **Dependencies are not declared** in `pyproject.toml` but the code uses `bleak` (BLE) and `Pillow` (rendering). Both are imported lazily inside the functions that need them so unrelated code paths still work without them.
-- **No tests, no CI, no lint config** committed. A `.ruff_cache/` exists (ruff 0.15.4) so ruff is used ad-hoc.
-- Intended CLI entry: `python -m goojprt <bluetooth-address> [flags]` (see `cli.py:build_parser` for flags, including `--print-image`, `--pdf417`, `--template`, `--test`, `--test-cp1250`). This won't run until the refactor above is finished.
+- **Tests** live in `tests/` and run with `python -m pytest tests/`.
+- CLI runs as `python -m goojprt <bluetooth-address> [flags]` (see `cli.py:build_parser` for flags, including `--print-image`, `--pdf417`, `--template`, `--test`, `--test-cp1250`).
 
 ## Architecture
 
@@ -25,7 +32,7 @@ When asked to modify a module, edit the `goojprt/` copy. Before declaring a chan
 
 `goojprt/transport/` intentionally does *not* expose an abstract `Transport` class. BLE is async (`bleak`), SPP is sync (`socket`, Linux-only); a shared interface would be leaky. `GoojPrtPT210` (in `printer.py`) is a facade that holds `_ble: BleTransport | None` and `_spp: SppTransport | None`, lazily instantiated by `connect_ble()` / `connect_spp()`. Every high-level print method has a BLE variant (`print_text`) and an SPP variant (`print_text_spp`); both delegate to the same byte builders in `commands.py`, so the wire format is identical.
 
-`BleTransport.write()` chunks at `CHUNK_SIZE = 182` bytes and sleeps `CHUNK_DELAY = 0.04` s between chunks because it uses `write-without-response` (no link-layer ACK). After a raster image, `write_image_data()` additionally sleeps `max(0.3, rows * 0.002)` s to let the paper motor catch up.
+`BleTransport.write()` chunks at `CHUNK_SIZE = 182` bytes and sleeps `CHUNK_DELAY = 0.04` s between chunks because it uses `write-without-response` (no link-layer ACK). Raster images are sent in strips via `write_raster_strip()`, which uses row-aligned 192-byte chunks (`CHUNK_SIZE_RASTER`) and sleeps `max(0.05, rows * 0.002)` s after each strip to let the paper motor catch up.
 
 ### Pure byte builders, stateful transports
 
@@ -42,7 +49,7 @@ When a user reports diacritic corruption, the usual answer is to switch from nat
 
 ### Rendering → raster → wire
 
-All renderers in `goojprt/rendering/` (text, grid, pdf417, ekg) are pure: they take parameters and return a 1-bit `PIL.Image.Image`. They never touch a transport. `raster.image_to_raster(img)` is the single bridge that converts a PIL image to the `GS v 0` raster payload, padding/cropping to `PAPER_WIDTH_PX = 384` (hardware print head: 48 mm at 203 DPI). `raster.pad_image_to_paper_width(img, align)` is used for narrower bitmaps (typically barcodes) that need paper-relative positioning.
+All renderers in `goojprt/rendering/` (text, grid, pdf417, ekg) are pure: they take parameters and return a 1-bit `PIL.Image.Image`. They never touch a transport. `raster.image_to_raster(img)` is the single bridge that converts a PIL image to the `GS v 0` raster payload, padding/cropping to `PAPER_WIDTH_PX = 384` (hardware print head: 48 mm at 203 DPI). `raster.pad_image_to_paper_width(img, align)` is used for narrower bitmaps (typically barcodes) that need paper-relative positioning. For large images, `raster.image_to_raster_strips(img, strip_height=24)` splits the image into small strips (default 24 rows = 1 152 bytes each) to avoid overflowing the printer's limited buffer.
 
 Pillow is imported lazily inside each renderer so the non-rendering parts of the SDK (commands, transports) stay usable without Pillow installed.
 
@@ -52,5 +59,5 @@ Pillow is imported lazily inside each renderer so the non-rendering parts of the
 
 ## Conventions
 
-- **Language**: All docstrings, comments, variable names, function names, log/print messages, and any other text in the codebase must be written in English. Czech content in existing files (`printer.py`, `template.py`, `cli.py`, root-level stale modules) is legacy and should be migrated to English whenever those files are touched.
+- **Language**: All docstrings, comments, variable names, function names, log/print messages, and any other text in the codebase must be written in English. Czech content in existing files is legacy and should be migrated to English whenever those files are touched.
 - **`_print_template` re-export**: `__init__.py` re-exports `print_template` as `_print_template` for backward compatibility with an external caller (`pokladna_wizard.py`). Keep this alias.
