@@ -55,3 +55,13 @@ def test_align_center_pads_symmetrically():
     narrow = Image.new("RGB", (10, 10), (0, 0, 0))
     result = prepare_image(narrow, scale=0.025, align="center")
     assert result.width == PAPER_WIDTH_PX
+
+
+def test_brightness_adjustment():
+    result = prepare_image(_rgb(), brightness=1.5)
+    assert result.mode == "1"
+
+
+def test_contrast_adjustment():
+    result = prepare_image(_rgb(), contrast=1.5)
+    assert result.mode == "1"

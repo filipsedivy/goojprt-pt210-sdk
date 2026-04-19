@@ -97,17 +97,31 @@ def test_main_test_cp1250_branch():
 
 
 def test_main_print_image_branch():
-    with patch("goojprt.cli.asyncio") as mock_asyncio:
-        mock_asyncio.run = MagicMock()
+    mock_printer = MagicMock()
+    mock_printer.connect_ble = AsyncMock()
+    mock_printer.initialize = AsyncMock()
+    mock_printer.print_text_image = AsyncMock()
+    mock_printer.feed = AsyncMock()
+    mock_printer.disconnect = AsyncMock()
+
+    with patch("goojprt.cli.GoojPrtPT210", return_value=mock_printer), \
+         patch("goojprt.cli.asyncio.run", side_effect=lambda coro: asyncio.get_event_loop().run_until_complete(coro)):
         _run_main(["addr", "--print-image", "hello"])
-        mock_asyncio.run.assert_called_once()
+    mock_printer.print_text_image.assert_called_once()
 
 
 def test_main_pdf417_branch():
-    with patch("goojprt.cli.asyncio") as mock_asyncio:
-        mock_asyncio.run = MagicMock()
+    mock_printer = MagicMock()
+    mock_printer.connect_ble = AsyncMock()
+    mock_printer.initialize = AsyncMock()
+    mock_printer.print_pdf417 = AsyncMock()
+    mock_printer.feed = AsyncMock()
+    mock_printer.disconnect = AsyncMock()
+
+    with patch("goojprt.cli.GoojPrtPT210", return_value=mock_printer), \
+         patch("goojprt.cli.asyncio.run", side_effect=lambda coro: asyncio.get_event_loop().run_until_complete(coro)):
         _run_main(["addr", "--pdf417", "data"])
-        mock_asyncio.run.assert_called_once()
+    mock_printer.print_pdf417.assert_called_once()
 
 
 def test_main_ble_default_branch():

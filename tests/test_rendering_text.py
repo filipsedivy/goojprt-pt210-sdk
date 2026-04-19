@@ -54,3 +54,10 @@ class TestRenderTextImage:
     def test_sharpen_enabled(self):
         img = render_text_image("Sharp", sharpen=True)
         assert img.mode == "1"
+
+    def test_font_oserror_falls_back_to_default(self):
+        from unittest.mock import patch
+        with patch("goojprt.rendering.text.find_system_font", return_value="/bad/path.ttf"):
+            img = render_text_image("Fallback")
+        assert img.mode == "1"
+        assert img.width == PAPER_WIDTH_PX

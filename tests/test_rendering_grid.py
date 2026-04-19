@@ -56,3 +56,10 @@ class TestRenderGrid:
         ]
         img = render_grid(cols)
         assert img.mode == "1"
+
+    def test_font_oserror_falls_back_to_default(self):
+        from unittest.mock import patch
+        with patch("goojprt.rendering.grid.find_system_font", return_value="/bad/font.ttf"):
+            img = render_grid(two_col())
+        assert img.mode == "1"
+        assert img.width == PAPER_WIDTH_PX

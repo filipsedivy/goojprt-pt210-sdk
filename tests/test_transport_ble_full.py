@@ -16,6 +16,18 @@ def _connected(write_char="w-uuid", notify_char=None) -> BleTransport:
     return t
 
 
+# ── module-level ImportError path ────────────────────────────────────────────
+
+def test_bleak_import_error_sets_available_false():
+    import importlib
+    import goojprt.transport.ble as ble_mod
+    with patch.dict(sys.modules, {"bleak": None}):
+        importlib.reload(ble_mod)
+        assert ble_mod.BLEAK_AVAILABLE is False
+    # Restore so other tests still have bleak available
+    importlib.reload(ble_mod)
+
+
 # ── scan ──────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

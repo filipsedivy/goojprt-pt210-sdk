@@ -248,6 +248,20 @@ async def test_query_printer_info_with_notify_returns_dict():
     assert "raw_responses" in result
 
 
+@pytest.mark.asyncio
+async def test_query_printer_info_response_decode_error_falls_back_to_hex():
+    p = _ble_printer()
+    p._ble.has_notify = True
+    p._ble.clear_notify_buffer = MagicMock()
+    bad = MagicMock()
+    bad.decode.side_effect = Exception("bad")
+    bad.hex.return_value = "deadbeef"
+    bad.__iter__ = lambda self: iter([])
+    p._ble.read_notify = AsyncMock(return_value=bad)
+    result = await p.query_printer_info(timeout=0.1)
+    assert any(v == "deadbeef" for v in result.values() if v != result.get("raw_responses"))
+
+
 # ── query_full_info ───────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -296,6 +310,16 @@ async def test_probe_charsets_custom_pages():
     p = _ble_printer()
     p._ble.has_notify = False
     await p.probe_charsets(test_string="abc", pages=[CodePage.PC437])
+    assert p._ble.write.called
+
+
+@pytest.mark.asyncio
+async def test_probe_charsets_lookup_error_falls_back_to_latin1():
+    p = _ble_printer()
+    p._ble.has_notify = False
+    with patch("goojprt.printer.commands.charset"), \
+         patch("goojprt.encoding.CODEPAGE_TO_ENCODING", {CodePage.PC437: "no-such-codec"}):
+        await p.probe_charsets(test_string="abc", pages=[CodePage.PC437])
     assert p._ble.write.called
 
 
