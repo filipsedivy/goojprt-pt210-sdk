@@ -1,5 +1,6 @@
 """Tests for uncovered paths in goojprt.transport.ble.BleTransport."""
 import asyncio
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import pytest

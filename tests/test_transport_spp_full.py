@@ -50,3 +50,17 @@ def test_write_calls_sendall():
     t = _connected()
     t.write(b"hello")
     t._sock.sendall.assert_called_once_with(b"hello")
+
+
+def test_connect_success_on_linux():
+    import socket as socket_mod
+    mock_sock = MagicMock()
+    with patch("goojprt.transport.spp.hasattr", return_value=True), \
+         patch("goojprt.transport.spp.socket") as mock_socket:
+        mock_socket.socket.return_value = mock_sock
+        mock_socket.AF_BLUETOOTH = 31
+        mock_socket.SOCK_STREAM = 1
+        mock_socket.BTPROTO_RFCOMM = 3
+        t = SppTransport()
+        t.connect("AA:BB:CC:DD:EE:FF", port=1)
+    mock_sock.connect.assert_called_once_with(("AA:BB:CC:DD:EE:FF", 1))

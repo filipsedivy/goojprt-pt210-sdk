@@ -104,8 +104,15 @@ def test_main_print_image_branch():
     mock_printer.feed = AsyncMock()
     mock_printer.disconnect = AsyncMock()
 
+    def run_coro(coro):
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
     with patch("goojprt.cli.GoojPrtPT210", return_value=mock_printer), \
-         patch("goojprt.cli.asyncio.run", side_effect=lambda coro: asyncio.get_event_loop().run_until_complete(coro)):
+         patch("goojprt.cli.asyncio.run", side_effect=run_coro):
         _run_main(["addr", "--print-image", "hello"])
     mock_printer.print_text_image.assert_called_once()
 
@@ -118,8 +125,15 @@ def test_main_pdf417_branch():
     mock_printer.feed = AsyncMock()
     mock_printer.disconnect = AsyncMock()
 
+    def run_coro(coro):
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
     with patch("goojprt.cli.GoojPrtPT210", return_value=mock_printer), \
-         patch("goojprt.cli.asyncio.run", side_effect=lambda coro: asyncio.get_event_loop().run_until_complete(coro)):
+         patch("goojprt.cli.asyncio.run", side_effect=run_coro):
         _run_main(["addr", "--pdf417", "data"])
     mock_printer.print_pdf417.assert_called_once()
 
