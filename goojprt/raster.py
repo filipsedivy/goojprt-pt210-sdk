@@ -61,6 +61,54 @@ def image_to_raster(image) -> bytes:
     return bytes(result)
 
 
+def image_to_raster_strips(image, strip_height: int = 24) -> list[bytes]:
+    """Split *image* into horizontal strips and return each as a ``GS v 0`` payload.
+
+    Each strip is a self-contained raster command. Consecutive strips are
+    seamless on paper because the printer's paper motor advances by exactly
+    the number of rows declared in each ``GS v 0`` header.
+
+    :param image: PIL image in any mode. Converted to ``"1"`` internally.
+    :param strip_height: Number of rows per strip (default 24 → 1 152 bytes
+        of pixel data per strip, safe for small printer buffers).
+    :returns: List of ``GS v 0`` byte payloads, one per strip.
+    """
+    from PIL import Image as PILImage
+    import numpy as np
+
+    img = image.convert("1")
+
+    if img.width > PAPER_WIDTH_PX:
+        img = img.crop((0, 0, PAPER_WIDTH_PX, img.height))
+    elif img.width < PAPER_WIDTH_PX:
+        canvas = PILImage.new("1", (PAPER_WIDTH_PX, img.height), 1)
+        canvas.paste(img, (0, 0))
+        img = canvas
+
+    width_bytes = PAPER_WIDTH_PX // 8
+    total_rows = img.height
+    strips = []
+
+    for y in range(0, total_rows, strip_height):
+        rows = min(strip_height, total_rows - y)
+        band = img.crop((0, y, PAPER_WIDTH_PX, y + rows))
+
+        payload = bytearray()
+        payload += bytes([
+            0x1D, 0x76, 0x30, 0x00,
+            width_bytes & 0xFF, (width_bytes >> 8) & 0xFF,
+            rows & 0xFF, (rows >> 8) & 0xFF,
+        ])
+
+        arr = np.asarray(band, dtype=np.uint8)
+        bits = (arr == 0).astype(np.uint8)
+        payload += np.packbits(bits, axis=1).tobytes()
+
+        strips.append(bytes(payload))
+
+    return strips
+
+
 def pad_image_to_paper_width(image, align: Align):
     """Pad a narrower image to :data:`PAPER_WIDTH_PX` with white background.
 
