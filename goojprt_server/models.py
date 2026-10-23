@@ -14,8 +14,13 @@ class PrintTextRequest(BaseModel):
     underline: bool = False
     size: Literal["normal", "double_width", "double_height", "double_both"] = "normal"
     bitmap: bool = False
+    #: Print each line natively when the printer's active code page can show it
+    #: and as a bitmap otherwise (needs a native text profile for diacritics).
+    auto: bool = False
     font_size: int = Field(default=24, ge=8, le=96)
-    encoding: str = "gb2312"
+    #: Codec for native text. ``None`` uses the codec of the active native text
+    #: profile, and GB2312 when there is none.
+    encoding: str | None = None
     feed_after: int = Field(default=0, ge=0, le=20)
 
 

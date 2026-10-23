@@ -18,13 +18,15 @@ import tomllib
 from pathlib import Path
 
 from goojprt import commands
+from goojprt.encoding import CODEPAGE_TO_ENCODING
 from goojprt.enums import Align, CodePage, TextSize
+from goojprt.profile import TextProfile
 from goojprt.printer import GoojPrtPT210, disconnect_quietly
 
 #: Item ``type`` values understood by :func:`print_template`.
 ITEM_TYPES = frozenset({
     "text_image", "text", "pdf417", "qr", "line", "feed", "cut", "grid", "ekg",
-    "charset", "chinese_mode", "image", "density",
+    "charset", "chinese_mode", "image", "density", "codepage",
 })
 
 
@@ -154,6 +156,40 @@ def _prepare_image_item(index: int, item: dict, base_dir: Path):
         raise TemplateError(f"item {index + 1} (image): {exc}") from exc
 
 
+def _codepage_profile(item: dict) -> TextProfile:
+    """The profile a ``codepage`` item stands for.
+
+    ``code_page`` is a :class:`~goojprt.enums.CodePage` name (``"PC852"``) or a
+    table number; ``encoding`` defaults to the codec known for the table and
+    ``chinese_mode_off`` (send ``FS .`` first) to ``true``.
+
+    :raises ValueError: For an unknown name, a table without a known codec
+        and no ``encoding``, or an invalid value.
+    """
+    page = item.get("code_page")
+    if isinstance(page, str):
+        try:
+            page = int(CodePage[page.upper()])
+        except KeyError:
+            raise ValueError(f"unknown code page {page!r} (known: {', '.join(cp.name for cp in CodePage)})") from None
+    if not isinstance(page, int) or isinstance(page, bool):
+        raise ValueError("code_page is required (a CodePage name or a table number)")
+    encoding = item.get("encoding") or CODEPAGE_TO_ENCODING.get(page)
+    if encoding is None:
+        raise ValueError(f"no codec is known for code page {page}; add encoding = \"...\"")
+    return TextProfile(page, encoding, item.get("chinese_mode_off", True))
+
+
+def _validate_codepage_items(items: list[dict]) -> None:
+    """Reject bad ``codepage`` items before the printer is touched."""
+    for i, item in enumerate(items):
+        if item.get("type") == "codepage":
+            try:
+                _codepage_profile(item)
+            except ValueError as exc:
+                raise TemplateError(f"item {i + 1} (codepage): {exc}") from exc
+
+
 def _density_of(item: dict) -> "str | int":
     """The ``level`` / ``heating`` setting of a ``density`` item."""
     return item.get("level", item.get("heating", "normal"))
@@ -193,6 +229,7 @@ async def print_template(
     *,
     density: "str | int | None" = None,
     preview: "str | None" = None,
+    profile: TextProfile | None = None,
 ) -> None:
     """Load a TOML template, substitute variables, connect via BLE and print.
 
@@ -200,7 +237,12 @@ async def print_template(
     code page by :class:`~goojprt.enums.CodePage` name (``code_page =
     "PC852"``) and ``chinese_mode`` toggles the double-byte mode
     (``enabled = false``); both affect the native ``text`` items that
-    follow. ``density`` sets the print darkness (``level`` = ``light`` /
+    follow, and so does ``codepage`` (``code_page = "PC852"`` or a table number;
+    optional ``encoding`` and ``chinese_mode_off``), which selects the table,
+    cancels the Chinese mode and makes ``text`` items encode for it — the
+    one-item way to print native Czech. A ``text`` item with ``auto = true``
+    prints natively when the active table can show the text and as a bitmap
+    otherwise. ``density`` sets the print darkness (``level`` = ``light`` /
     ``normal`` / ``dark``, or ``heating`` = 0–255). Unknown types print a warning on stdout and are skipped.
 
     An ``image`` item prints a picture (``path`` is relative to the template
@@ -217,6 +259,10 @@ async def print_template(
         initialised (see :meth:`~goojprt.printer.GoojPrtPT210.set_density`);
         a ``density`` item (``level = "dark"`` or ``heating = 120``) in the
         template overrides it from that point on.
+    :param profile: Native text profile applied right after the printer is
+        initialised (see :meth:`~goojprt.printer.GoojPrtPT210.apply_profile`),
+        so ``text`` items with diacritics need no ``encoding``. A ``codepage``
+        item overrides it from that point on.
     :param preview: Render into this PNG file instead of printing — no
         printer is needed. Bitmap items are drawn as they would print;
         native ``text`` and ``qr`` items appear as dashed notes only.
@@ -251,6 +297,7 @@ async def print_template(
         except ValueError as exc:
             raise TemplateError(f"density: {exc}") from exc
     _validate_density_items(items)
+    _validate_codepage_items(items)
     images = await _prepare_images(items, Path(path).resolve().parent)
 
     printer = GoojPrtPT210()
@@ -266,6 +313,8 @@ async def print_template(
         await printer.initialize()
         if density is not None:
             await printer.set_density(density)
+        if profile is not None:
+            await printer.apply_profile(profile)
 
         for i, item in enumerate(items):
             kind = item.get("type", "")
@@ -286,6 +335,15 @@ async def print_template(
                 )
             elif kind == "image":
                 await printer.print_image(images[i])
+            elif kind == "text" and item.get("auto", False):
+                await printer.print_text_auto(
+                    item["text"],
+                    align=align_map.get(item.get("align", "left"), Align.LEFT),
+                    bold=item.get("bold", False),
+                    underline=item.get("underline", False),
+                    size=size_map.get(item.get("size", "normal"), TextSize.NORMAL),
+                    font_size=item.get("font_size", 24),
+                )
             elif kind == "text":
                 await printer.print_text(
                     item["text"],
@@ -294,7 +352,7 @@ async def print_template(
                     underline=item.get("underline", False),
                     size=size_map.get(item.get("size", "normal"), TextSize.NORMAL),
                     newline=item.get("newline", True),
-                    encoding=item.get("encoding", "gb2312"),
+                    encoding=item.get("encoding"),
                 )
             elif kind == "pdf417":
                 await printer.print_pdf417(
@@ -344,6 +402,8 @@ async def print_template(
                     dots=item.get("dots", 7),
                     interval=item.get("interval", 2),
                 )
+            elif kind == "codepage":
+                await printer.apply_profile(_codepage_profile(item))
             elif kind == "chinese_mode":
                 await printer.set_chinese_mode(bool(item.get("enabled", False)))
             elif kind == "ekg":

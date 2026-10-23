@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sys
 import time
@@ -10,6 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from goojprt import GoojPrtPT210
+from goojprt.profile import load_profile
 from goojprt_server import __version__, printer_holder
 from goojprt_server.config import Settings
 from goojprt_server.dashboard import (
@@ -211,10 +213,23 @@ def build_lifespan(settings: Settings):
         def _on_ble_disconnect(_client=None) -> None:
             monitor.signal_disconnect()
 
+        text_profile = None
+        if not settings.no_profile:
+            try:
+                text_profile = load_profile(settings.profile)
+            except ValueError as e:
+                if dashboard is not None:
+                    with contextlib.suppress(Exception):
+                        dashboard.stop()
+                log.error("%s native text profile: %s — exiting", glyph("err"), e)
+                raise RuntimeError(f"native text profile: {e}") from e
+
         printer = GoojPrtPT210()
         try:
             await printer.connect_ble(settings.ble_address, on_disconnect=_on_ble_disconnect)
             await printer.initialize()
+            if text_profile is not None:
+                await printer.apply_profile(text_profile)
         except Exception as e:  # noqa: BLE001
             if dashboard is not None:
                 try:
@@ -225,6 +240,8 @@ def build_lifespan(settings: Settings):
             raise RuntimeError(f"BLE connect failed: {e}") from e
         printer_holder.set_printer(printer)
         ble_log.info("%s connected to %s", glyph("ok"), settings.ble_address)
+        if text_profile is not None:
+            ble_log.info("native text profile: %s", text_profile.describe())
 
         qs = QueueState(
             queue=asyncio.Queue(maxsize=settings.queue_max_size),

@@ -67,7 +67,16 @@ async def dispatch_payload(printer, job_type: str, payload: dict) -> None:
     """
     p = payload
     if job_type == "text":
-        if p.get("bitmap"):
+        if p.get("auto") and not p.get("bitmap"):
+            await printer.print_text_auto(
+                text=p["text"],
+                align=_ALIGN[p.get("align", "left")],
+                bold=p.get("bold", False),
+                underline=p.get("underline", False),
+                size=_SIZE[p.get("size", "normal")],
+                font_size=p.get("font_size", 24),
+            )
+        elif p.get("bitmap"):
             await printer.print_text_image(
                 text=p["text"],
                 font_size=p.get("font_size", 24),
@@ -80,7 +89,7 @@ async def dispatch_payload(printer, job_type: str, payload: dict) -> None:
                 bold=p.get("bold", False),
                 underline=p.get("underline", False),
                 size=_SIZE[p.get("size", "normal")],
-                encoding=p.get("encoding", "gb2312"),
+                encoding=p.get("encoding"),
             )
         if p.get("feed_after", 0) > 0:
             await printer.feed(lines=p["feed_after"])

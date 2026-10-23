@@ -16,6 +16,15 @@ from collections.abc import AsyncIterator
 from goojprt.commands import resolve_density
 from goojprt.enums import Align, CodePage, TextSize
 from goojprt.printer import GoojPrtPT210, disconnect_quietly
+from goojprt.profile import (
+    PROFILE_ENV,
+    CZECH_TEST_TEXT,
+    TextProfile,
+    candidate_for,
+    default_profile_path,
+    load_profile,
+    save_profile,
+)
 from goojprt.rendering.image_print import FIT_MODES
 from goojprt.template import TemplateError, print_template
 
@@ -29,12 +38,14 @@ async def _connected(
     *,
     preview: str | None = None,
     density: "str | int | None" = None,
+    profile: TextProfile | None = None,
 ) -> AsyncIterator[GoojPrtPT210]:
     """Connect, initialise and always disconnect, even when the work inside fails.
 
     With ``preview`` no printer is used: everything is rendered into that PNG
     file, which is written when the work inside finishes without an error.
-    ``density`` is applied right after the initialisation.
+    ``density`` and the native text ``profile`` are applied right after the
+    initialisation.
     """
     printer = GoojPrtPT210()
     transport = None
@@ -49,12 +60,59 @@ async def _connected(
         await printer.initialize()
         if density is not None:
             await printer.set_density(density)
+        if profile is not None:
+            await printer.apply_profile(profile)
+            print(f"Native text profile: {profile.describe()}")
         yield printer
         if transport is not None and preview is not None:
             transport.save(preview)
             print(f"Preview saved to {preview}: {transport.summary()}")
     finally:
         await disconnect_quietly(printer)
+
+
+async def _calibrate(address: str, text: str) -> dict[str, TextProfile]:
+    """Print the calibration sheet (no profile applied: it must show the raw printer)."""
+    async with _connected(address) as printer:
+        print("Printing the calibration sheet ...")
+        return await printer.print_charset_calibration(text)
+
+
+def _save_choice(letter: str, path: "str | None") -> None:
+    """Store the candidate behind ``letter`` as the native text profile."""
+    try:
+        profile = candidate_for(letter)
+    except ValueError as exc:
+        sys.exit(f"goojprt: {exc}")
+    file = save_profile(profile, path)
+    print(f"Saved {profile.describe()} to {file}")
+    print("Templates and `--print-text` use it from now on (`--no-profile` ignores it).")
+
+
+def _print_legend(sheet: dict[str, TextProfile]) -> None:
+    """List what each letter on the calibration sheet stands for."""
+    print()
+    for letter, candidate in sheet.items():
+        print(f"  {letter}: {candidate.describe()}")
+
+
+def _ask_for_letter(sheet: dict[str, TextProfile], path: "str | None") -> None:
+    """Ask which line was printed correctly and save that choice."""
+    _print_legend(sheet)
+    letters = "".join(sheet)
+    for _ in range(3):
+        try:
+            answer = input(f"\nWhich line shows the text exactly? [{letters[0]}-{letters[-1]}, Enter = none] ")
+        except EOFError:
+            answer = ""
+        if not answer.strip():
+            print("Nothing saved. Bitmap text (--print-image) works on every unit.")
+            return
+        if answer.strip().upper()[:1] in letters:
+            _save_choice(answer, path)
+            return
+        print(f"  Please answer with one of {', '.join(letters)}.")
+    print("Nothing saved.")
 
 
 async def _scan(timeout: float, show_all: bool) -> None:
@@ -205,6 +263,10 @@ Examples:
   # BLE demo print
   python3 -m goojprt <addr>
 
+  # Native text with Czech diacritics: find the right code page once, then just print
+  python3 -m goojprt <addr> --calibrate
+  python3 -m goojprt <addr> --print-text "Příliš žluťoučký kůň"
+
   # Bitmap text with antialiasing
   python3 -m goojprt <addr> --print-image "Příliš žluťoučký kůň"
   python3 -m goojprt <addr> --print-image "Headline" --font-size 48 --no-dither
@@ -250,6 +312,26 @@ Examples:
     g_out.add_argument("--density", type=_density_arg, metavar="light|normal|dark|0-255",
                        help="Print darkness (ESC 7 heating time); presets are uncalibrated "
                             "starting points")
+
+    g_text = parser.add_argument_group("Native text (--print-text, --calibrate)")
+    g_text.add_argument("--print-text", metavar="TEXT",
+                        help="Print TEXT with the printer's own fonts; lines the active code page "
+                             "cannot show fall back to a bitmap (see --calibrate)")
+    g_text.add_argument("--bold", action="store_true", help="Bold (with --print-text)")
+    g_text.add_argument("--underline", action="store_true", help="Underline (with --print-text)")
+    g_text.add_argument("--size", choices=["normal", "double_width", "double_height", "double_both"],
+                        default="normal", help="Character size (with --print-text)")
+    g_text.add_argument("--calibrate", action="store_true",
+                        help="Print the same sentence with every candidate code page, labelled with "
+                             "letters, then ask which line is correct and remember it")
+    g_text.add_argument("--calibrate-text", default=CZECH_TEST_TEXT, metavar="TEXT",
+                        help="Sentence for --calibrate (default: every Czech diacritic)")
+    g_text.add_argument("--calibrate-pick", metavar="LETTER",
+                        help="Save the profile of a letter from a calibration sheet without printing")
+    g_text.add_argument("--profile", metavar="FILE",
+                        help=f"Native text profile file (default: ${PROFILE_ENV} or the user config directory)")
+    g_text.add_argument("--no-profile", action="store_true",
+                        help="Ignore the saved native text profile")
 
     g_img = parser.add_argument_group("Bitmap text printing (--print-image)")
     g_img.add_argument("--print-image", metavar="TEXT",
@@ -349,14 +431,25 @@ def main() -> None:
         asyncio.run(_scan(args.scan_timeout, args.scan_all))
         return
 
+    if args.profile and args.no_profile:
+        parser.error("--profile and --no-profile exclude each other")
+    if args.calibrate_pick:
+        _save_choice(args.calibrate_pick, args.profile)
+        return
+
     address, mode = _resolve_target(args)
     args.address, args.mode = address, mode
 
-    renders_bitmaps = bool(args.template or args.print_image or args.print_file or args.pdf417)
-    if args.preview is not None and not renders_bitmaps:
-        parser.error("--preview works with --template, --print-image, --print-file or --pdf417")
-    if args.density is not None and not renders_bitmaps:
-        parser.error("--density works with --template, --print-image, --print-file or --pdf417")
+    prints_something = bool(args.template or args.print_image or args.print_file or args.pdf417
+                            or args.print_text)
+    if args.preview is not None and not prints_something:
+        parser.error("--preview works with --template, --print-text, --print-image, --print-file "
+                     "or --pdf417")
+    if args.density is not None and not prints_something:
+        parser.error("--density works with --template, --print-text, --print-image, --print-file "
+                     "or --pdf417")
+    if args.calibrate and args.preview is not None:
+        parser.error("--calibrate needs the real printer; a preview cannot show native text")
     if args.preview is not None and args.mode == "spp":
         parser.error("--preview cannot be combined with the spp transport")
     if address is None and args.preview is None:
@@ -364,6 +457,15 @@ def main() -> None:
                      f"{ADDRESS_ENV} (use --scan to find it)")
 
     session = {"preview": args.preview, "density": args.density}
+
+    text_profile = None
+    if not args.no_profile and (args.template or args.print_text):
+        try:
+            text_profile = load_profile(args.profile)
+        except ValueError as exc:
+            sys.exit(f"goojprt: {exc}")
+        if text_profile is None and args.profile:
+            sys.exit(f"goojprt: no native text profile at {args.profile}")
 
     if args.template:
         extra = {}
@@ -374,10 +476,37 @@ def main() -> None:
         try:
             asyncio.run(print_template(
                 args.address, args.template, extra or None,
-                density=args.density, preview=args.preview,
+                density=args.density, preview=args.preview, profile=text_profile,
             ))
         except TemplateError as exc:
             sys.exit(f"goojprt: {exc}")
+
+    elif args.calibrate:
+        sheet = asyncio.run(_calibrate(args.address, args.calibrate_text))
+        if sys.stdin.isatty():
+            _ask_for_letter(sheet, args.profile)
+        else:
+            _print_legend(sheet)
+            print("\nLook at the paper, then save the line that is correct with "
+                  "`--calibrate-pick LETTER`.")
+
+    elif args.print_text:
+        size_map = {"normal": TextSize.NORMAL, "double_width": TextSize.DOUBLE_WIDTH,
+                    "double_height": TextSize.DOUBLE_HEIGHT, "double_both": TextSize.DOUBLE_BOTH}
+
+        async def _cmd() -> None:
+            """Native text print (bitmap fallback per line): connect, initialise, print, disconnect."""
+            async with _connected(args.address, profile=text_profile, **session) as printer:
+                await printer.print_text_auto(
+                    args.print_text,
+                    align=align_map[args.align],
+                    bold=args.bold,
+                    underline=args.underline,
+                    size=size_map[args.size],
+                    font_size=args.font_size,
+                )
+                await printer.feed(3)
+        asyncio.run(_cmd())
 
     elif args.test:
         asyncio.run(_run_test(args.address, args.test_string))

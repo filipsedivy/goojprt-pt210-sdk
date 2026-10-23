@@ -102,4 +102,4 @@ def test_every_item_type_is_covered_by_an_example_or_a_test():
     for path in EXAMPLE_FILES:
         used |= {i["type"] for i in tomllib.loads(path.read_text(encoding="utf-8"))["items"]}
     assert used <= ITEM_TYPES
-    assert {"image", "text_image", "grid", "qr", "charset", "chinese_mode"} <= used
+    assert {"image", "text_image", "grid", "qr", "codepage"} <= used

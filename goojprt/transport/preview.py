@@ -29,12 +29,16 @@ _ESC_FEED = b"\x1b\x64"
 _ESC_ONE_PARAM = b"aEd-t3M2"
 
 
-def _describe_native(data: bytes) -> str:
+def _describe_native(data: bytes) -> str | None:
     """Best-effort one-line description of a native ESC/POS command stream.
 
     Skips the formatting commands the SDK emits, shows the QR payload of a
     ``GS ( k`` symbol and the printable text of everything else. Unknown
     commands only make the text less accurate; nothing here can fail.
+
+    :returns: ``None`` when the stream puts nothing on paper — code page,
+        Chinese mode, density and similar settings — so previews stay quiet
+        about it.
     """
     text: list[str] = []
     qr: str | None = None
@@ -76,7 +80,7 @@ def _describe_native(data: bytes) -> str:
             i += 1
     label = f"QR {qr}" if qr is not None else "".join(text).strip(" |")
     if not label:
-        label = f"{n} bytes"
+        return None
     return label if len(label) <= 60 else label[:57] + "..."
 
 
@@ -159,8 +163,10 @@ class PreviewTransport:
         elif len(data) == 3 and data.startswith(_ESC_FEED):
             self._parts.append(data[2] * self.FEED_LINE_PX)
         else:
-            self.native_commands += 1
-            self._parts.append(_describe_native(data))
+            label = _describe_native(data)
+            if label is not None:               # settings (code page, density, …) print nothing
+                self.native_commands += 1
+                self._parts.append(label)
 
     async def write_raster_strip(self, data: bytes, rows: int = 24) -> None:
         """Record one ``GS v 0`` strip (``rows`` is only used for pacing on a real printer).

@@ -154,12 +154,12 @@ class TestMainValidation:
     def test_preview_needs_no_address_for_a_template(self):
         with patch("goojprt.cli.print_template", new=AsyncMock()) as template:
             _run("--template", "t.toml", "--preview", "o.png")
-        template.assert_awaited_once_with(None, "t.toml", None, density=None, preview="o.png")
+        template.assert_awaited_once_with(None, "t.toml", None, density=None, preview="o.png", profile=None)
 
     def test_density_reaches_the_template(self):
         with patch("goojprt.cli.print_template", new=AsyncMock()) as template:
             _run("AA:BB", "--template", "t.toml", "--density", "100")
-        assert template.await_args.kwargs == {"density": 100, "preview": None}
+        assert template.await_args.kwargs == {"density": 100, "preview": None, "profile": None}
 
 
 # ── --scan ────────────────────────────────────────────────────────────────────

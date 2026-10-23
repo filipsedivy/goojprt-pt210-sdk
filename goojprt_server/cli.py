@@ -53,6 +53,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Path to a rotating server log file (default: platform-specific)")
     p.add_argument("--no-log-file", action="store_true",
                    help="Disable file logging even when the dashboard is active")
+    p.add_argument("--profile", default=None,
+                   help="Native text profile file written by `goojprt --calibrate` "
+                        "(default: $GOOJPRT_PROFILE or the user config directory)")
+    p.add_argument("--no-profile", action="store_true",
+                   help="Ignore the native text profile; native text is GB2312")
     return p
 
 
@@ -80,6 +85,11 @@ def _collect_overrides(ns: argparse.Namespace) -> dict:
         overrides["log_file"] = Path(ns.log_file)
     if ns.no_log_file:
         overrides["no_log_file"] = True
+    if ns.profile is not None:
+        from pathlib import Path
+        overrides["profile"] = Path(ns.profile)
+    if ns.no_profile:
+        overrides["no_profile"] = True
     return overrides
 
 

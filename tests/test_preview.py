@@ -182,8 +182,12 @@ class TestDescribeNative:
         (commands.charset(commands.CodePage.PC852) + b"x", "x"),
         (commands.energy() + b"y", "y"),
         (commands.chinese_mode(False) + b"z", "z"),
-        (b"\x1b", "1 bytes"),
-        (b"\x00\x01", "2 bytes"),
+        (commands.barcode_qr("a" * 5), "QR aaaaa"),
+        (b"\x1b", None),                   # nothing printable: stays out of the preview
+        (b"\x00\x01", None),
+        (commands.chinese_mode(False) + commands.charset(18), None),
+        (commands.energy(), None),
+        (commands.init() + commands.align(commands.Align.CENTER), None),
     ])
     def test_known_sequences(self, data, expected):
         assert _describe_native(data) == expected
@@ -196,12 +200,12 @@ class TestDescribeNative:
         rnd = random.Random(7)
         for _ in range(2000):
             data = bytes(rnd.randrange(256) for _ in range(rnd.randrange(0, 40)))
-            assert isinstance(_describe_native(data), str)
+            assert _describe_native(data) is None or isinstance(_describe_native(data), str)
 
     def test_truncated_commands_never_raise(self):
         for cmd in (b"\x1d\x28\x6b", b"\x1d\x28\x6b\xff\xff", b"\x1d\x28\x6b\x05\x00\x31",
                     b"\x1d\x56", b"\x1b\x37\x01", b"\x1c"):
-            assert isinstance(_describe_native(cmd), str)
+            assert _describe_native(cmd) is None or isinstance(_describe_native(cmd), str)
 
 
 # ── transport contract ────────────────────────────────────────────────────────
@@ -327,3 +331,28 @@ class TestTransportSwitching:
         printer, first = _facade()
         second = printer.connect_preview()
         assert second is not first and printer._ble is second
+
+
+class TestSettingsAreInvisible:
+    @pytest.mark.asyncio
+    async def test_a_profile_prints_nothing_and_is_not_reported(self):
+        from goojprt.profile import TextProfile
+
+        printer, preview = _facade()
+        await printer.apply_profile(TextProfile(18, "cp852"))
+        await printer.set_density("dark")
+        await printer.set_chinese_mode(False)
+        await printer.set_charset(commands.CodePage.PC852)
+        assert preview.native_commands == 0
+        assert preview.height == 1
+        assert "native" not in preview.summary()
+
+    @pytest.mark.asyncio
+    async def test_text_after_a_profile_is_still_reported(self):
+        from goojprt.profile import TextProfile
+
+        printer, preview = _facade()
+        await printer.apply_profile(TextProfile(18, "cp852"))
+        await printer.print_text("Příliš")
+        assert preview.native_commands == 1
+        assert preview._parts == ["P??li?"]            # ř, í, š are code page bytes
