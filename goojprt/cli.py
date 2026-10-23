@@ -7,43 +7,53 @@ shell snippets keep working.
 
 import argparse
 import asyncio
+import contextlib
+import sys
+from collections.abc import AsyncIterator
 
 from goojprt.enums import Align, CodePage, TextSize
-from goojprt.printer import GoojPrtPT210
-from goojprt.template import print_template
+from goojprt.printer import GoojPrtPT210, disconnect_quietly
+from goojprt.template import TemplateError, print_template
 
 
-async def _demo_ble(address: str) -> None:
-    """Self-contained BLE demo: text, QR, PDF417, diacritics (bitmap)."""
+@contextlib.asynccontextmanager
+async def _connected(address: str) -> AsyncIterator[GoojPrtPT210]:
+    """Connect over BLE; always disconnect, even when the work inside fails."""
     printer = GoojPrtPT210()
     print(f"Connecting to {address} ...")
     await printer.connect_ble(address)
     print("Connected.")
+    try:
+        yield printer
+    finally:
+        await disconnect_quietly(printer)
 
-    await printer.initialize()
-    await printer.print_text("=== GoojPrt PT-210 ===", align=Align.CENTER, bold=True)
-    await printer.print_line()
-    await printer.print_text("Normal text")
-    await printer.print_text("Bold text", bold=True)
-    await printer.print_text("Large text", size=TextSize.DOUBLE_BOTH)
-    await printer.print_line()
-    await printer.print_text("QR code:", align=Align.CENTER)
-    await printer.print_qr("https://goojprt.com", size=5)
-    await printer.print_line()
-    await printer.print_text("PDF417:", align=Align.CENTER)
-    await printer.print_pdf417("GoojPrt-PT210-TEST-123")
-    await printer.print_line()
 
-    await printer.set_charset(CodePage.PC852)
-    await printer.print_text("CP852: Příliš žluťoučký kůň", encoding="cp852")
+async def _demo_ble(address: str) -> None:
+    """Self-contained BLE demo: text, QR, PDF417, diacritics (bitmap)."""
+    async with _connected(address) as printer:
+        await printer.initialize()
+        await printer.print_text("=== GoojPrt PT-210 ===", align=Align.CENTER, bold=True)
+        await printer.print_line()
+        await printer.print_text("Normal text")
+        await printer.print_text("Bold text", bold=True)
+        await printer.print_text("Large text", size=TextSize.DOUBLE_BOTH)
+        await printer.print_line()
+        await printer.print_text("QR code:", align=Align.CENTER)
+        await printer.print_qr("https://goojprt.com", size=5)
+        await printer.print_line()
+        await printer.print_text("PDF417:", align=Align.CENTER)
+        await printer.print_pdf417("GoojPrt-PT210-TEST-123")
+        await printer.print_line()
 
-    await printer.print_text_image(
-        "Příliš žluťoučký kůň\núpěl ďábelské ódy",
-        font_size=28, align=Align.LEFT,
-    )
-    await printer.feed(4)
+        await printer.set_charset(CodePage.PC852)
+        await printer.print_text("CP852: Příliš žluťoučký kůň", encoding="cp852")
 
-    await printer.disconnect()
+        await printer.print_text_image(
+            "Příliš žluťoučký kůň\núpěl ďábelské ódy",
+            font_size=28, align=Align.LEFT,
+        )
+        await printer.feed(4)
     print("Done, disconnected.")
 
 
@@ -53,26 +63,22 @@ def _demo_spp(address: str) -> None:
     print(f"Connecting (SPP) to {address} ...")
     printer.connect_spp(address)
     print("Connected.")
-
-    printer.initialize_spp()
-    printer.print_text_spp("SPP print test", align=Align.CENTER, bold=True)
-    printer.feed_spp(4)
-
-    printer.disconnect_spp()
+    try:
+        printer.initialize_spp()
+        printer.print_text_spp("SPP print test", align=Align.CENTER, bold=True)
+        printer.feed_spp(4)
+    finally:
+        with contextlib.suppress(Exception):
+            printer.disconnect_spp()
     print("Done, disconnected.")
 
 
 async def _run_test(address: str, test_string: str) -> None:
     """Probe the firmware's code-page table using :meth:`probe_charsets`."""
-    printer = GoojPrtPT210()
-    print(f"Connecting to {address} ...")
-    await printer.connect_ble(address)
-    print("Connected. Running code-page probe...\n")
-
-    await printer.initialize()
-    await printer.probe_charsets(test_string)
-
-    await printer.disconnect()
+    async with _connected(address) as printer:
+        print("Running code-page probe...\n")
+        await printer.initialize()
+        await printer.probe_charsets(test_string)
     print("Probe complete, disconnected.")
 
 
@@ -88,49 +94,45 @@ async def _run_test_cp1250(address: str, test_string: str) -> None:
         """Return an ASCII label used to separate variants on the paper."""
         return f"--- {text} ---\n".encode("ascii", errors="replace")
 
-    printer = GoojPrtPT210()
-    print(f"Connecting to {address} ...")
-    await printer.connect_ble(address)
-    print("Connected. Running CP1250 quality test...\n")
-
     encoded = test_string.encode("cp1250", errors="replace")
 
-    await printer.initialize()
-    await printer._ble.write(commands.charset(CodePage.WPC1250))
+    async with _connected(address) as printer:
+        print("Running CP1250 quality test...\n")
+        await printer.initialize()
+        await printer._ble.write(commands.charset(CodePage.WPC1250))
 
-    # 1) Normal
-    await printer._ble.write(label("1) Font A, normal"))
-    await printer._ble.write(commands.font(font_b=False))
-    await printer._ble.write(commands.bold(False))
-    await printer._ble.write(encoded + b"\n")
+        # 1) Normal
+        await printer._ble.write(label("1) Font A, normal"))
+        await printer._ble.write(commands.font(font_b=False))
+        await printer._ble.write(commands.bold(False))
+        await printer._ble.write(encoded + b"\n")
 
-    # 2) Bold
-    await printer._ble.write(label("2) Font A, bold"))
-    await printer._ble.write(commands.bold(True))
-    await printer._ble.write(encoded + b"\n")
-    await printer._ble.write(commands.bold(False))
+        # 2) Bold
+        await printer._ble.write(label("2) Font A, bold"))
+        await printer._ble.write(commands.bold(True))
+        await printer._ble.write(encoded + b"\n")
+        await printer._ble.write(commands.bold(False))
 
-    # 3) Font B
-    await printer._ble.write(label("3) Font B, normal"))
-    await printer._ble.write(commands.font(font_b=True))
-    await printer._ble.write(encoded + b"\n")
-    await printer._ble.write(commands.font(font_b=False))
+        # 3) Font B
+        await printer._ble.write(label("3) Font B, normal"))
+        await printer._ble.write(commands.font(font_b=True))
+        await printer._ble.write(encoded + b"\n")
+        await printer._ble.write(commands.font(font_b=False))
 
-    # 4) Font A with higher heating energy
-    await printer._ble.write(label("4) Font A + energy 120"))
-    await printer._ble.write(commands.energy(dots=7, heating=120, interval=2))
-    await printer._ble.write(encoded + b"\n")
+        # 4) Font A with higher heating energy
+        await printer._ble.write(label("4) Font A + energy 120"))
+        await printer._ble.write(commands.energy(dots=7, heating=120, interval=2))
+        await printer._ble.write(encoded + b"\n")
 
-    # 5) Bold with higher heating energy
-    await printer._ble.write(label("5) Bold + energy 120"))
-    await printer._ble.write(commands.bold(True))
-    await printer._ble.write(encoded + b"\n")
-    await printer._ble.write(commands.bold(False))
+        # 5) Bold with higher heating energy
+        await printer._ble.write(label("5) Bold + energy 120"))
+        await printer._ble.write(commands.bold(True))
+        await printer._ble.write(encoded + b"\n")
+        await printer._ble.write(commands.bold(False))
 
-    # Restore default energy and feed paper out.
-    await printer._ble.write(commands.energy(dots=7, heating=80, interval=2))
-    await printer.feed(4)
-    await printer.disconnect()
+        # Restore default energy and feed paper out.
+        await printer._ble.write(commands.energy(dots=7, heating=80, interval=2))
+        await printer.feed(4)
     print("CP1250 test complete, disconnected.")
 
 
@@ -223,7 +225,10 @@ def main() -> None:
             if "=" in pair:
                 k, v = pair.split("=", 1)
                 extra[k.strip()] = v.strip()
-        asyncio.run(print_template(args.address, args.template, extra or None))
+        try:
+            asyncio.run(print_template(args.address, args.template, extra or None))
+        except TemplateError as exc:
+            sys.exit(f"goojprt: {exc}")
 
     elif args.test:
         asyncio.run(_run_test(args.address, args.test_string))
@@ -234,37 +239,33 @@ def main() -> None:
     elif args.print_image:
         async def _cmd() -> None:
             """Bitmap text print: connect, initialise, print, disconnect."""
-            printer = GoojPrtPT210()
-            await printer.connect_ble(args.address)
-            await printer.initialize()
-            await printer.print_text_image(
-                args.print_image,
-                font_size=args.font_size,
-                font_path=args.font,
-                align=align_map[args.align],
-                supersample=args.supersample,
-                dither=not args.no_dither,
-                threshold=args.threshold,
-            )
-            await printer.feed(3)
-            await printer.disconnect()
+            async with _connected(args.address) as printer:
+                await printer.initialize()
+                await printer.print_text_image(
+                    args.print_image,
+                    font_size=args.font_size,
+                    font_path=args.font,
+                    align=align_map[args.align],
+                    supersample=args.supersample,
+                    dither=not args.no_dither,
+                    threshold=args.threshold,
+                )
+                await printer.feed(3)
         asyncio.run(_cmd())
 
     elif args.pdf417:
         async def _cmd() -> None:
             """PDF417 print: connect, initialise, print, disconnect."""
-            printer = GoojPrtPT210()
-            await printer.connect_ble(args.address)
-            await printer.initialize()
-            await printer.print_pdf417(
-                args.pdf417,
-                scale=args.pdf417_scale,
-                row_height=args.pdf417_row_height,
-                columns=args.pdf417_columns,
-                min_rows=args.pdf417_min_rows,
-            )
-            await printer.feed(3)
-            await printer.disconnect()
+            async with _connected(args.address) as printer:
+                await printer.initialize()
+                await printer.print_pdf417(
+                    args.pdf417,
+                    scale=args.pdf417_scale,
+                    row_height=args.pdf417_row_height,
+                    columns=args.pdf417_columns,
+                    min_rows=args.pdf417_min_rows,
+                )
+                await printer.feed(3)
         asyncio.run(_cmd())
 
     elif args.mode == "ble":

@@ -15,11 +15,28 @@ is byte-identical.
 """
 
 import asyncio
+import logging
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 
 from goojprt import commands, raster, rendering, status
 from goojprt.constants import PAPER_WIDTH_PX
 from goojprt.enums import Align, CodePage, TextSize
 from goojprt.transport import BleTransport, SppTransport
+
+log = logging.getLogger(__name__)
+
+
+async def disconnect_quietly(printer) -> None:
+    """Disconnect ``printer`` and log a failure instead of raising it.
+
+    Meant for ``finally`` blocks: a failing disconnect must not replace the
+    exception that is already on its way out.
+    """
+    try:
+        await printer.disconnect()
+    except Exception:  # noqa: BLE001
+        log.warning("disconnecting the printer failed", exc_info=True)
 
 
 class GoojPrtPT210:
@@ -49,6 +66,64 @@ class GoojPrtPT210:
         """Create an empty driver. Transports are attached on first connect."""
         self._ble: BleTransport | None = None
         self._spp: SppTransport | None = None
+
+    @classmethod
+    @asynccontextmanager
+    async def ble(
+        cls,
+        address: str,
+        *,
+        initialize: bool = True,
+        on_disconnect=None,
+        chunk_size: int | None = None,
+        chunk_delay: float | None = None,
+    ) -> AsyncIterator["GoojPrtPT210"]:
+        """Connect over BLE for the duration of an ``async with`` block.
+
+        The printer is initialised (``ESC @``, unless ``initialize=False``)
+        and always disconnected on the way out, also when the block raises::
+
+            async with GoojPrtPT210.ble("XX:XX:XX:XX:XX:XX") as printer:
+                await printer.print_text("Hello")
+
+        The remaining parameters are those of :meth:`connect_ble`.
+        """
+        printer = cls()
+        await printer.connect_ble(
+            address, on_disconnect=on_disconnect,
+            chunk_size=chunk_size, chunk_delay=chunk_delay,
+        )
+        try:
+            if initialize:
+                await printer.initialize()
+            yield printer
+        finally:
+            await disconnect_quietly(printer)
+
+    @classmethod
+    @contextmanager
+    def spp(
+        cls, address: str, port: int = 1, *, initialize: bool = True,
+    ) -> Iterator["GoojPrtPT210"]:
+        """Connect over classic SPP (Linux only) for the duration of a ``with`` block.
+
+        Initialises the printer unless ``initialize=False`` and always closes
+        the socket afterwards::
+
+            with GoojPrtPT210.spp("XX:XX:XX:XX:XX:XX") as printer:
+                printer.print_text_spp("Hello")
+        """
+        printer = cls()
+        printer.connect_spp(address, port)
+        try:
+            if initialize:
+                printer.initialize_spp()
+            yield printer
+        finally:
+            try:
+                printer.disconnect_spp()
+            except Exception:  # noqa: BLE001
+                log.warning("closing the SPP socket failed", exc_info=True)
 
     # ------------------------------------------------------------------ #
     #  BLE lifecycle

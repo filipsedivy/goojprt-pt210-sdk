@@ -19,7 +19,7 @@ from pathlib import Path
 
 from goojprt import commands
 from goojprt.enums import Align, CodePage, TextSize
-from goojprt.printer import GoojPrtPT210
+from goojprt.printer import GoojPrtPT210, disconnect_quietly
 
 #: Item ``type`` values understood by :func:`print_template`.
 ITEM_TYPES = frozenset({
@@ -249,102 +249,103 @@ async def print_template(
     print(f"Connecting to {address} ...")
     await printer.connect_ble(address)
     print(f"Connected. Printing template: {path}\n")
-    await printer.initialize()
-    if density is not None:
-        await printer.set_density(density)
+    try:
+        await printer.initialize()
+        if density is not None:
+            await printer.set_density(density)
 
-    for i, item in enumerate(items):
-        kind = item.get("type", "")
-        print(f"  [{i+1}/{len(items)}] {kind}")
+        for i, item in enumerate(items):
+            kind = item.get("type", "")
+            print(f"  [{i+1}/{len(items)}] {kind}")
 
-        if kind == "text_image":
-            await printer.print_text_image(
-                item["text"],
-                font_size=item.get("font_size", 24),
-                font_path=item.get("font", None),
-                align=align_map.get(item.get("align", "left"), Align.LEFT),
-                line_spacing=item.get("line_spacing", 6),
-                padding=item.get("padding", 8),
-                supersample=item.get("supersample", 3),
-                dither=item.get("dither", True),
-                threshold=item.get("threshold", 140),
-                wrap=item.get("wrap", True),
-            )
-        elif kind == "image":
-            await printer.print_image(images[i])
-        elif kind == "text":
-            await printer.print_text(
-                item["text"],
-                align=align_map.get(item.get("align", "left"), Align.LEFT),
-                bold=item.get("bold", False),
-                underline=item.get("underline", False),
-                size=size_map.get(item.get("size", "normal"), TextSize.NORMAL),
-                newline=item.get("newline", True),
-                encoding=item.get("encoding", "gb2312"),
-            )
-        elif kind == "pdf417":
-            await printer.print_pdf417(
-                item["data"],
-                align=align_map.get(item.get("align", "center"), Align.CENTER),
-                scale=item.get("scale", 2),
-                row_height=item.get("row_height", 5),
-                columns=item.get("columns", 5),
-                padding=item.get("padding", 10),
-                min_rows=item.get("min_rows", None),
-            )
-        elif kind == "qr":
-            await printer.print_qr(
-                item["data"],
-                size=item.get("size", 6),
-                align=align_map.get(item.get("align", "center"), Align.CENTER),
-                error_correction=item.get("error_correction", 1),
-            )
-        elif kind == "line":
-            await printer.print_line(char=item.get("char", "-"))
-        elif kind == "feed":
-            await printer.feed(item.get("lines", 3))
-        elif kind == "cut":
-            await printer.cut()
-        elif kind == "grid":
-            await printer.print_grid(
-                item.get("columns", []),
-                font_size=item.get("font_size", 22),
-                font_path=item.get("font", None),
-                padding=item.get("padding", 6),
-                supersample=item.get("supersample", 3),
-                dither=item.get("dither", False),
-                threshold=item.get("threshold", 128),
-            )
-        elif kind == "charset":
-            name = str(item.get("code_page", ""))
-            try:
-                code_page = CodePage[name.upper()]
-            except KeyError:
-                known = ", ".join(cp.name for cp in CodePage)
-                print(f"    ! Unknown code page '{name}' (known: {known}), skipping.")
-                continue
-            await printer.set_charset(code_page)
-        elif kind == "density":
-            await printer.set_density(
-                _density_of(item),
-                dots=item.get("dots", 7),
-                interval=item.get("interval", 2),
-            )
-        elif kind == "chinese_mode":
-            await printer.set_chinese_mode(bool(item.get("enabled", False)))
-        elif kind == "ekg":
-            await printer.print_ekg(
-                beats=item.get("beats", 4),
-                height_px=item.get("height", 160),
-                line_width=item.get("line_width", 2),
-                grid=item.get("grid", True),
-                grid_step_px=item.get("grid_step", 32),
-                amplitude=item.get("amplitude", 0.82),
-                portrait=item.get("portrait", False),
-                px_per_beat=item.get("px_per_beat", 240),
-            )
-        else:
-            print(f"    ! Unknown item type: '{kind}', skipping.")
-
-    await printer.disconnect()
+            if kind == "text_image":
+                await printer.print_text_image(
+                    item["text"],
+                    font_size=item.get("font_size", 24),
+                    font_path=item.get("font", None),
+                    align=align_map.get(item.get("align", "left"), Align.LEFT),
+                    line_spacing=item.get("line_spacing", 6),
+                    padding=item.get("padding", 8),
+                    supersample=item.get("supersample", 3),
+                    dither=item.get("dither", True),
+                    threshold=item.get("threshold", 140),
+                    wrap=item.get("wrap", True),
+                )
+            elif kind == "image":
+                await printer.print_image(images[i])
+            elif kind == "text":
+                await printer.print_text(
+                    item["text"],
+                    align=align_map.get(item.get("align", "left"), Align.LEFT),
+                    bold=item.get("bold", False),
+                    underline=item.get("underline", False),
+                    size=size_map.get(item.get("size", "normal"), TextSize.NORMAL),
+                    newline=item.get("newline", True),
+                    encoding=item.get("encoding", "gb2312"),
+                )
+            elif kind == "pdf417":
+                await printer.print_pdf417(
+                    item["data"],
+                    align=align_map.get(item.get("align", "center"), Align.CENTER),
+                    scale=item.get("scale", 2),
+                    row_height=item.get("row_height", 5),
+                    columns=item.get("columns", 5),
+                    padding=item.get("padding", 10),
+                    min_rows=item.get("min_rows", None),
+                )
+            elif kind == "qr":
+                await printer.print_qr(
+                    item["data"],
+                    size=item.get("size", 6),
+                    align=align_map.get(item.get("align", "center"), Align.CENTER),
+                    error_correction=item.get("error_correction", 1),
+                )
+            elif kind == "line":
+                await printer.print_line(char=item.get("char", "-"))
+            elif kind == "feed":
+                await printer.feed(item.get("lines", 3))
+            elif kind == "cut":
+                await printer.cut()
+            elif kind == "grid":
+                await printer.print_grid(
+                    item.get("columns", []),
+                    font_size=item.get("font_size", 22),
+                    font_path=item.get("font", None),
+                    padding=item.get("padding", 6),
+                    supersample=item.get("supersample", 3),
+                    dither=item.get("dither", False),
+                    threshold=item.get("threshold", 128),
+                )
+            elif kind == "charset":
+                name = str(item.get("code_page", ""))
+                try:
+                    code_page = CodePage[name.upper()]
+                except KeyError:
+                    known = ", ".join(cp.name for cp in CodePage)
+                    print(f"    ! Unknown code page '{name}' (known: {known}), skipping.")
+                    continue
+                await printer.set_charset(code_page)
+            elif kind == "density":
+                await printer.set_density(
+                    _density_of(item),
+                    dots=item.get("dots", 7),
+                    interval=item.get("interval", 2),
+                )
+            elif kind == "chinese_mode":
+                await printer.set_chinese_mode(bool(item.get("enabled", False)))
+            elif kind == "ekg":
+                await printer.print_ekg(
+                    beats=item.get("beats", 4),
+                    height_px=item.get("height", 160),
+                    line_width=item.get("line_width", 2),
+                    grid=item.get("grid", True),
+                    grid_step_px=item.get("grid_step", 32),
+                    amplitude=item.get("amplitude", 0.82),
+                    portrait=item.get("portrait", False),
+                    px_per_beat=item.get("px_per_beat", 240),
+                )
+            else:
+                print(f"    ! Unknown item type: '{kind}', skipping.")
+    finally:
+        await disconnect_quietly(printer)
     print("\nDone, disconnected.")
