@@ -172,6 +172,21 @@ Run `goojprt --help` for all options.
 
 If diacritics appear as garbage, switch to `print_text_image`. Use `--test` (or `probe_charsets()`) to test your specific unit.
 
+Characters that the chosen `encoding` cannot represent are printed as `?` (and a warning is logged) rather than being sent as UTF-8, which the printer would render as garbage.
+
+### Getting native diacritics to work
+
+Many cheap printers boot in a double-byte (Chinese) mode in which bytes ≥ 0x80 are half of a character, so a single-byte code page can look wrong even after `ESC t`. `--test` prints every code page twice — as is, and after `FS .` (cancel Chinese mode) — plus both slots that different firmware uses for Windows-1250 (`ESC t 16` and `ESC t 45`). Whichever line is readable tells you what to use:
+
+```python
+await printer.initialize()
+await printer.set_chinese_mode(False)      # FS .
+await printer.set_charset(CodePage.PC852)  # ESC t 18
+await printer.print_text("Příliš žluťoučký kůň", encoding="cp852")
+```
+
+Templates can do the same with `chinese_mode` and `charset` items, see [`examples/native-text-czech.toml`](examples/native-text-czech.toml). If nothing looks right, `print_text_image` always works.
+
 ---
 
 ## TOML templates
@@ -194,7 +209,31 @@ type = "feed"
 lines = 4
 ```
 
-Variables like `{{date}}`, `{{time}}`, `{{expiry_7d}}` are built-in. Pass custom variables with `--var KEY=VALUE`.
+Variables like `{{date}}`, `{{time}}`, `{{expire_24h}}`, `{{password_12}}` are built-in. Pass custom variables with `--var KEY=VALUE`.
+
+Item types: `text`, `text_image`, `qr`, `pdf417`, `grid`, `ekg`, `line`, `feed`, `cut`, `charset`, `chinese_mode`. Ready-to-run samples are in [`examples/`](examples/): a receipt, a guest Wi-Fi voucher with a QR code, and a native-text experiment.
+
+---
+
+## How the printer talks
+
+- **BLE:** the primary UUIDs (`49535343-…`) are Microchip's *Transparent UART* service (BM70/RN4870 modules): GATT writes go to the module, which forwards them over a UART to the printer MCU. There is no flow control, so the SDK writes in small chunks with a pause in between and waits after every raster strip. Some firmware uses the `0000ff00` service family instead; both are tried.
+- **Protocol:** plain ESC/POS — `ESC @`, `GS ! n`, `GS ( k` (QR), `GS v 0` (raster, sent in 24-row strips), `DLE EOT n` / `GS I n` for status and identification (answers arrive on the notify characteristic, if the unit has one). See `goojprt.status` for decoding the status bytes.
+- **Concurrency:** writes are serialised, so a status query from another task can never land in the middle of a print job.
+
+The pacing is conservative. If your unit keeps up, print faster by lowering the pause (and raise it again if you see missing lines):
+
+```python
+await printer.connect_ble("XX:XX:XX:XX:XX:XX", chunk_delay=0.02)
+```
+
+---
+
+## Upgrading
+
+- `TextSize.DOUBLE_HEIGHT`, `DOUBLE_WIDTH` and `DOUBLE_BOTH` now produce 1×2, 2×1 and 2×2 characters as their names say. They used to send `0x11`, `0x20` and `0x31` (2×2, 3×1, 4×2), so existing output with `size=` will look different.
+- `print_text` / `text_to_bytes` replace unencodable characters with `?` instead of switching the whole string to UTF-8.
+- `numpy` is no longer needed: bitmap printing used to fail with `ModuleNotFoundError` on a plain `pip install`.
 
 ---
 
