@@ -2,37 +2,83 @@
 
 Entry point: ``python -m goojprt <address> [flags]``. Flags are kept
 stable with the historic standalone ``goojprt.py`` script so existing
-shell snippets keep working.
+shell snippets keep working. ``goojprt --scan`` lists nearby devices, and
+``GOOJPRT_ADDRESS`` can replace the address argument.
 """
 
 import argparse
 import asyncio
 import contextlib
+import os
 import sys
 from collections.abc import AsyncIterator
 
+from goojprt.commands import resolve_density
 from goojprt.enums import Align, CodePage, TextSize
 from goojprt.printer import GoojPrtPT210, disconnect_quietly
+from goojprt.rendering.image_print import FIT_MODES
 from goojprt.template import TemplateError, print_template
+
+#: Environment variable that supplies the printer address when none is given.
+ADDRESS_ENV = "GOOJPRT_ADDRESS"
 
 
 @contextlib.asynccontextmanager
-async def _connected(address: str) -> AsyncIterator[GoojPrtPT210]:
-    """Connect over BLE; always disconnect, even when the work inside fails."""
+async def _connected(
+    address: str | None,
+    *,
+    preview: str | None = None,
+    density: "str | int | None" = None,
+) -> AsyncIterator[GoojPrtPT210]:
+    """Connect, initialise and always disconnect, even when the work inside fails.
+
+    With ``preview`` no printer is used: everything is rendered into that PNG
+    file, which is written when the work inside finishes without an error.
+    ``density`` is applied right after the initialisation.
+    """
     printer = GoojPrtPT210()
-    print(f"Connecting to {address} ...")
-    await printer.connect_ble(address)
-    print("Connected.")
+    transport = None
+    if preview is None:
+        print(f"Connecting to {address} ...")
+        await printer.connect_ble(address)
+        print("Connected.")
+    else:
+        transport = printer.connect_preview()
+        print(f"Rendering into {preview} (no printer is used) ...")
     try:
+        await printer.initialize()
+        if density is not None:
+            await printer.set_density(density)
         yield printer
+        if transport is not None and preview is not None:
+            transport.save(preview)
+            print(f"Preview saved to {preview}: {transport.summary()}")
     finally:
         await disconnect_quietly(printer)
+
+
+async def _scan(timeout: float, show_all: bool) -> None:
+    """List nearby BLE devices so the user can find the printer's address."""
+    print(f"Scanning for {timeout:g} s ...")
+    try:
+        devices = await GoojPrtPT210().scan_ble(timeout=timeout)
+    except Exception as exc:  # noqa: BLE001 — Bluetooth off, no permission, bleak missing, …
+        sys.exit(f"goojprt: scan failed: {exc}")
+    shown = [d for d in devices if show_all or d["name"] != "?"]
+    shown.sort(key=lambda d: (d["name"].lower(), d["address"]))
+    if not shown:
+        hint = "" if show_all else " with a name (--scan-all includes unnamed ones)"
+        print(f"No Bluetooth LE devices{hint} found. Is the printer switched on and nearby?")
+        return
+    width = max(len(d["address"]) for d in shown)
+    for device in shown:
+        print(f"{device['address']:<{width}}  {device['name']}")
+    print(f"\nUse the address as `goojprt <address> ...` or set {ADDRESS_ENV}.")
 
 
 async def _demo_ble(address: str) -> None:
     """Self-contained BLE demo: text, QR, PDF417, diacritics (bitmap)."""
     async with _connected(address) as printer:
-        await printer.initialize()
         await printer.print_text("=== GoojPrt PT-210 ===", align=Align.CENTER, bold=True)
         await printer.print_line()
         await printer.print_text("Normal text")
@@ -77,7 +123,6 @@ async def _run_test(address: str, test_string: str) -> None:
     """Probe the firmware's code-page table using :meth:`probe_charsets`."""
     async with _connected(address) as printer:
         print("Running code-page probe...\n")
-        await printer.initialize()
         await printer.probe_charsets(test_string)
     print("Probe complete, disconnected.")
 
@@ -98,7 +143,6 @@ async def _run_test_cp1250(address: str, test_string: str) -> None:
 
     async with _connected(address) as printer:
         print("Running CP1250 quality test...\n")
-        await printer.initialize()
         await printer._ble.write(commands.charset(CodePage.WPC1250))
 
         # 1) Normal
@@ -136,14 +180,28 @@ async def _run_test_cp1250(address: str, test_string: str) -> None:
     print("CP1250 test complete, disconnected.")
 
 
+def _density_arg(value: str) -> "str | int":
+    """``--density`` value: a preset name or a number 0-255."""
+    level: "str | int" = int(value) if value.isdigit() else value
+    try:
+        resolve_density(level)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    return level
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the ``argparse`` parser with every supported CLI flag."""
     parser = argparse.ArgumentParser(
         prog="goojprt",
         description="GoojPrt PT-210 Bluetooth driver",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog=f"""
 Examples:
+  # Find the printer's address (a UUID on macOS), then use it
+  python3 -m goojprt --scan
+  export {ADDRESS_ENV}=<address>        # optional: then the address can be left out
+
   # BLE demo print
   python3 -m goojprt <addr>
 
@@ -151,9 +209,16 @@ Examples:
   python3 -m goojprt <addr> --print-image "Příliš žluťoučký kůň"
   python3 -m goojprt <addr> --print-image "Headline" --font-size 48 --no-dither
 
+  # An image file, scaled down to the paper
+  python3 -m goojprt <addr> --print-file photo.jpg
+  python3 -m goojprt <addr> --print-file logo.png --fit width --density dark
+
   # PDF417 barcode
   python3 -m goojprt <addr> --pdf417 "1234567890"
   python3 -m goojprt <addr> --pdf417 "data" --pdf417-scale 3 --pdf417-columns 7
+
+  # Template, rendered to a PNG instead of printed (no printer needed)
+  python3 -m goojprt --template examples/receipt.toml --preview receipt.png
 
   # Code-page probe
   python3 -m goojprt <addr> --test
@@ -161,11 +226,30 @@ Examples:
         """,
     )
 
-    parser.add_argument("address", help="Bluetooth address / UUID of the printer")
+    parser.add_argument(
+        "address", nargs="?", default=None,
+        help=f"Bluetooth address / UUID of the printer (default: ${ADDRESS_ENV})",
+    )
     parser.add_argument(
         "mode", nargs="?", default="ble", choices=["ble", "spp"],
         help="Transport: ble (default) or spp",
     )
+
+    g_scan = parser.add_argument_group("Finding the printer (--scan)")
+    g_scan.add_argument("--scan", action="store_true",
+                        help="List nearby Bluetooth LE devices and exit")
+    g_scan.add_argument("--scan-timeout", type=float, default=5.0, metavar="SECONDS",
+                        help="Scan duration (default: 5)")
+    g_scan.add_argument("--scan-all", action="store_true",
+                        help="Include devices that advertise no name")
+
+    g_out = parser.add_argument_group("Output options (--print-image, --print-file, --pdf417, --template)")
+    g_out.add_argument("--preview", metavar="OUT.png",
+                       help="Render into this PNG file instead of printing; no printer or "
+                            "address needed. Native text and QR codes show up as dashed notes.")
+    g_out.add_argument("--density", type=_density_arg, metavar="light|normal|dark|0-255",
+                       help="Print darkness (ESC 7 heating time); presets are uncalibrated "
+                            "starting points")
 
     g_img = parser.add_argument_group("Bitmap text printing (--print-image)")
     g_img.add_argument("--print-image", metavar="TEXT",
@@ -175,13 +259,23 @@ Examples:
     g_img.add_argument("--font", metavar="PATH",
                        help="Path to a .ttf/.ttc file (default: system font)")
     g_img.add_argument("--align", choices=["left", "center", "right"], default="left",
-                       help="Text alignment (default: left)")
+                       help="Alignment of text, or of an image narrower than the paper "
+                            "(default: left)")
     g_img.add_argument("--supersample", type=int, default=3, metavar="N",
                        help="Antialiasing oversampling factor 1–4 (default: 3)")
     g_img.add_argument("--no-dither", action="store_true",
                        help="Disable Floyd–Steinberg dithering, use pure threshold")
     g_img.add_argument("--threshold", type=int, default=140, metavar="0-255",
                        help="Threshold for --no-dither (default: 140)")
+
+    g_file = parser.add_argument_group("Image file (--print-file)")
+    g_file.add_argument("--print-file", metavar="PATH",
+                        help="Print an image file (also uses --align, --no-dither, --threshold)")
+    g_file.add_argument("--fit", choices=FIT_MODES, default="shrink",
+                        help="shrink: scale down to the paper when wider (default); "
+                             "width: fill the paper; none: keep the size, cut off what is wider")
+    g_file.add_argument("--scale", type=float, default=1.0, metavar="FACTOR",
+                        help="Size factor applied on top of --fit (default: 1.0)")
 
     g_pdf = parser.add_argument_group("PDF417 barcode (--pdf417)")
     g_pdf.add_argument("--pdf417", metavar="DATA",
@@ -213,11 +307,63 @@ Examples:
     return parser
 
 
+def _resolve_target(args: argparse.Namespace) -> tuple[str | None, str]:
+    """Work out the printer address and transport from the arguments and the environment.
+
+    An explicit address wins over :data:`ADDRESS_ENV`. ``goojprt spp`` (a lone
+    transport name) means "use the address from the environment".
+    """
+    address, mode = args.address, args.mode
+    if address in ("ble", "spp") and mode == "ble":
+        address, mode = None, address
+    return address or os.environ.get(ADDRESS_ENV) or None, mode
+
+
+def _prepare_file(args: argparse.Namespace):
+    """Open ``--print-file`` and run the 1-bit pipeline; ``SystemExit`` on a bad file."""
+    from PIL import Image
+
+    from goojprt.rendering.image_print import prepare_image
+
+    try:
+        with Image.open(args.print_file) as source:
+            return prepare_image(
+                source,
+                scale=args.scale,
+                fit=args.fit,
+                threshold=args.threshold,
+                dither=not args.no_dither,
+                align=args.align,
+            )
+    except (OSError, ValueError) as exc:
+        sys.exit(f"goojprt: cannot use {args.print_file!r}: {exc}")
+
+
 def main() -> None:
     """Entry point. Parses ``argv`` and dispatches to the selected command."""
     parser = build_parser()
     args = parser.parse_args()
     align_map = {"left": Align.LEFT, "center": Align.CENTER, "right": Align.RIGHT}
+
+    if args.scan:
+        asyncio.run(_scan(args.scan_timeout, args.scan_all))
+        return
+
+    address, mode = _resolve_target(args)
+    args.address, args.mode = address, mode
+
+    renders_bitmaps = bool(args.template or args.print_image or args.print_file or args.pdf417)
+    if args.preview is not None and not renders_bitmaps:
+        parser.error("--preview works with --template, --print-image, --print-file or --pdf417")
+    if args.density is not None and not renders_bitmaps:
+        parser.error("--density works with --template, --print-image, --print-file or --pdf417")
+    if args.preview is not None and args.mode == "spp":
+        parser.error("--preview cannot be combined with the spp transport")
+    if address is None and args.preview is None:
+        parser.error(f"a printer address is required: pass it as the first argument or set "
+                     f"{ADDRESS_ENV} (use --scan to find it)")
+
+    session = {"preview": args.preview, "density": args.density}
 
     if args.template:
         extra = {}
@@ -226,7 +372,10 @@ def main() -> None:
                 k, v = pair.split("=", 1)
                 extra[k.strip()] = v.strip()
         try:
-            asyncio.run(print_template(args.address, args.template, extra or None))
+            asyncio.run(print_template(
+                args.address, args.template, extra or None,
+                density=args.density, preview=args.preview,
+            ))
         except TemplateError as exc:
             sys.exit(f"goojprt: {exc}")
 
@@ -239,8 +388,7 @@ def main() -> None:
     elif args.print_image:
         async def _cmd() -> None:
             """Bitmap text print: connect, initialise, print, disconnect."""
-            async with _connected(args.address) as printer:
-                await printer.initialize()
+            async with _connected(args.address, **session) as printer:
                 await printer.print_text_image(
                     args.print_image,
                     font_size=args.font_size,
@@ -253,11 +401,20 @@ def main() -> None:
                 await printer.feed(3)
         asyncio.run(_cmd())
 
+    elif args.print_file:
+        image = _prepare_file(args)     # a bad file must fail before the printer is touched
+
+        async def _cmd() -> None:
+            """Image file print: connect, initialise, print, disconnect."""
+            async with _connected(args.address, **session) as printer:
+                await printer.print_image(image)
+                await printer.feed(3)
+        asyncio.run(_cmd())
+
     elif args.pdf417:
         async def _cmd() -> None:
             """PDF417 print: connect, initialise, print, disconnect."""
-            async with _connected(args.address) as printer:
-                await printer.initialize()
+            async with _connected(args.address, **session) as printer:
                 await printer.print_pdf417(
                     args.pdf417,
                     scale=args.pdf417_scale,
