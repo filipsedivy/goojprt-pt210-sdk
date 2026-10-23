@@ -1,0 +1,25 @@
+# EXPERIMENTAL: native (non-bitmap) Czech text. Whether it prints correctly
+# depends on the firmware. Run `goojprt <address> --test` first and compare
+# the probe lines; use whichever code page / FS . combination looks right,
+# and adjust `code_page` below. When in doubt, use `text_image` instead.
+#
+#   goojprt <address> --template examples/native-text-czech.toml
+
+# FS . — leave the double-byte (Chinese) mode so bytes >= 0x80 are single characters.
+[[items]]
+type = "chinese_mode"
+enabled = false
+
+# ESC t n — pick the code page by its goojprt.CodePage name.
+[[items]]
+type = "charset"
+code_page = "PC852"
+
+[[items]]
+type = "text"
+text = "Příliš žluťoučký kůň úpěl ďábelské ódy"
+encoding = "cp852"
+
+[[items]]
+type = "feed"
+lines = 3

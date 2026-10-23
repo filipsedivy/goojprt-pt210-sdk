@@ -1,0 +1,26 @@
+# Guest Wi-Fi voucher with a QR code that phones can scan to join.
+# {{password_12}} is generated once per run and is identical everywhere in
+# the template; {{expire_24h}} is "now + 24 hours".
+#
+#   goojprt <address> --template examples/wifi-voucher.toml --var ssid=GuestWiFi
+
+[[items]]
+type = "text_image"
+text = "Guest Wi-Fi"
+font_size = 34
+align = "center"
+
+[[items]]
+type = "qr"
+data = "WIFI:T:WPA;S:{{ssid}};P:{{password_12}};;"
+size = 6
+
+[[items]]
+type = "text_image"
+text = "Network: {{ssid}}\nPassword: {{password_12}}\nValid until {{expire_24h}}"
+font_size = 22
+align = "center"
+
+[[items]]
+type = "feed"
+lines = 4

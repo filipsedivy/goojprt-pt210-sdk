@@ -5,10 +5,9 @@ with dynamic variables substituted before printing. A job is printed
 by calling :func:`print_template` — the function loads the file,
 expands variables, connects over BLE and issues the matching SDK calls.
 
-Supported item types (see :func:`print_template` for the full dispatch
-table): ``text_image``, ``text``, ``pdf417``, ``qr``, ``line``, ``feed``,
-``cut``, ``grid``, ``ekg``. Unknown types produce a warning on stdout
-and are skipped.
+Supported item types are listed in :data:`ITEM_TYPES`; see
+:func:`print_template` for the dispatch table. Unknown types produce a
+warning on stdout and are skipped.
 """
 
 import datetime
@@ -16,8 +15,14 @@ import re
 import secrets
 import tomllib
 
-from goojprt.enums import Align, TextSize
+from goojprt.enums import Align, CodePage, TextSize
 from goojprt.printer import GoojPrtPT210
+
+#: Item ``type`` values understood by :func:`print_template`.
+ITEM_TYPES = frozenset({
+    "text_image", "text", "pdf417", "qr", "line", "feed", "cut", "grid", "ekg",
+    "charset", "chinese_mode",
+})
 
 
 def random_password(length: int) -> str:
@@ -114,9 +119,11 @@ async def print_template(
 ) -> None:
     """Load a TOML template, substitute variables, connect via BLE and print.
 
-    Supported item types: ``text_image``, ``text``, ``pdf417``, ``qr``,
-    ``line``, ``feed``, ``cut``, ``grid``, ``ekg``. Unknown types print
-    a warning on stdout and are skipped.
+    Supported item types: see :data:`ITEM_TYPES`. ``charset`` selects a
+    code page by :class:`~goojprt.enums.CodePage` name (``code_page =
+    "PC852"``) and ``chinese_mode`` toggles the double-byte mode
+    (``enabled = false``); both affect the native ``text`` items that
+    follow. Unknown types print a warning on stdout and are skipped.
 
     :param address: Bluetooth address / UUID of the printer.
     :param path: Filesystem path to a ``.toml`` template.
@@ -206,6 +213,17 @@ async def print_template(
                 dither=item.get("dither", False),
                 threshold=item.get("threshold", 128),
             )
+        elif kind == "charset":
+            name = str(item.get("code_page", ""))
+            try:
+                code_page = CodePage[name.upper()]
+            except KeyError:
+                known = ", ".join(cp.name for cp in CodePage)
+                print(f"    ! Unknown code page '{name}' (known: {known}), skipping.")
+                continue
+            await printer.set_charset(code_page)
+        elif kind == "chinese_mode":
+            await printer.set_chinese_mode(bool(item.get("enabled", False)))
         elif kind == "ekg":
             await printer.print_ekg(
                 beats=item.get("beats", 4),

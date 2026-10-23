@@ -14,7 +14,10 @@ The two API surfaces share the underlying byte builders so their output
 is byte-identical.
 """
 
-from goojprt import commands, raster, rendering
+import asyncio
+
+from goojprt import commands, raster, rendering, status
+from goojprt.constants import PAPER_WIDTH_PX
 from goojprt.enums import Align, CodePage, TextSize
 from goojprt.transport import BleTransport, SppTransport
 
@@ -61,14 +64,47 @@ class GoojPrtPT210:
             self._ble = BleTransport()
         return await self._ble.scan(timeout=timeout)
 
-    async def connect_ble(self, address: str, *, on_disconnect=None) -> None:
+    async def connect_ble(
+        self,
+        address: str,
+        *,
+        on_disconnect=None,
+        chunk_size: int | None = None,
+        chunk_delay: float | None = None,
+    ) -> None:
         """Connect to the printer over BLE.
 
         Creates the BLE transport lazily on first use.
+
+        :param on_disconnect: Callback invoked when the link drops.
+        :param chunk_size: Bytes per BLE write; see
+            :class:`~goojprt.transport.ble.BleTransport`.
+        :param chunk_delay: Pause between writes in seconds. Lower it to
+            print faster if your unit keeps up, raise it if bytes get lost.
+
+        ``on_disconnect``, ``chunk_size`` and ``chunk_delay`` apply when the
+        transport is created, i.e. on the first connect.
         """
         if self._ble is None:
-            self._ble = BleTransport(on_disconnect=on_disconnect)
+            kwargs = {}
+            if chunk_size is not None:
+                kwargs["chunk_size"] = chunk_size
+            if chunk_delay is not None:
+                kwargs["chunk_delay"] = chunk_delay
+            self._ble = BleTransport(on_disconnect=on_disconnect, **kwargs)
         await self._ble.connect(address)
+
+    def _require_ble(self) -> BleTransport:
+        """Return the BLE transport or explain how to get one."""
+        if self._ble is None:
+            raise RuntimeError("Not connected over BLE; call connect_ble() first.")
+        return self._ble
+
+    def _require_spp(self) -> SppTransport:
+        """Return the SPP transport or explain how to get one."""
+        if self._spp is None:
+            raise RuntimeError("Not connected over SPP; call connect_spp() first.")
+        return self._spp
 
     async def disconnect(self) -> None:
         """Disconnect the BLE client (see :meth:`BleTransport.disconnect`)."""
@@ -106,7 +142,7 @@ class GoojPrtPT210:
 
     async def initialize(self) -> None:
         """Initialise the printer (``ESC @``) — reset to factory defaults."""
-        await self._ble.write(commands.init())
+        await self._require_ble().write(commands.init())
 
     async def print_text(
         self,
@@ -128,7 +164,7 @@ class GoojPrtPT210:
         :param newline: Append a trailing line feed after the text.
         :param encoding: Python codec name used for byte encoding.
         """
-        await self._ble.write(commands.build_text_block(
+        await self._require_ble().write(commands.build_text_block(
             text, align, bold, underline, size, newline, encoding,
         ))
 
@@ -138,16 +174,16 @@ class GoojPrtPT210:
         Defaults to roughly 32 characters wide — ``PAPER_WIDTH_PX // 12``,
         matching Font A metrics.
         """
-        line = char * (384 // 12)  # PAPER_WIDTH_PX // 12 — approximate column count
+        line = char * (PAPER_WIDTH_PX // 12)  # approximate column count
         await self.print_text(line, encoding=encoding)
 
     async def feed(self, lines: int = 3) -> None:
         """Feed paper by ``lines`` rows (``ESC d n``)."""
-        await self._ble.write(commands.feed(lines))
+        await self._require_ble().write(commands.feed(lines))
 
     async def cut(self) -> None:
         """Trigger the cutter (no-op on PT-210, which has no cutter hardware)."""
-        await self._ble.write(commands.cut())
+        await self._require_ble().write(commands.cut())
 
     async def print_qr(
         self,
@@ -157,23 +193,30 @@ class GoojPrtPT210:
         error_correction: int = 1,
     ) -> None:
         """Print a QR code over BLE using the native ESC/POS QR command."""
-        await self._ble.write(commands.build_qr_block(data, size, align, error_correction))
+        await self._require_ble().write(commands.build_qr_block(data, size, align, error_correction))
 
     async def print_image(self, image, strip_height: int = 24) -> None:
         """Print a :class:`PIL.Image.Image` over BLE as an ESC/POS raster.
 
         The image is split into horizontal strips of ``strip_height`` rows and
         sent as separate ``GS v 0`` commands. This keeps each payload small
-        enough to fit in the printer's limited buffer and aligns chunk
-        boundaries to raster row width, preventing pixel-shift artifacts.
+        enough to fit in the printer's limited buffer; the transport paces
+        the writes and waits after every strip for the paper motor.
+
+        Rasterising runs in a worker thread so a large image does not stall
+        the event loop (and with it BLE keep-alives and notifications).
 
         :param image: PIL image in any mode.
         :param strip_height: Rows per strip (default 24 → 1 152 bytes per
             strip, safe for cheap hardware with small buffers).
         """
-        for strip in raster.image_to_raster_strips(image, strip_height=strip_height):
+        ble = self._require_ble()
+        strips = await asyncio.to_thread(
+            raster.image_to_raster_strips, image, strip_height=strip_height,
+        )
+        for strip in strips:
             rows = strip[6] | (strip[7] << 8)  # from GS v 0 header
-            await self._ble.write_raster_strip(strip, rows=rows)
+            await ble.write_raster_strip(strip, rows=rows)
 
     async def print_image_from_file(self, path: str) -> None:
         """Load an image from disk (via :func:`PIL.Image.open`) and print it."""
@@ -199,7 +242,8 @@ class GoojPrtPT210:
         resampling and Floyd–Steinberg dithering, so any installed font
         produces a readable result.
         """
-        img = rendering.render_text_image(
+        img = await asyncio.to_thread(
+            rendering.render_text_image,
             text, font_size=font_size, font_path=font_path,
             line_spacing=line_spacing, padding=padding, align=align,
             supersample=supersample, dither=dither, threshold=threshold,
@@ -221,7 +265,8 @@ class GoojPrtPT210:
         See :func:`goojprt.rendering.grid.render_grid` for the column
         dictionary schema.
         """
-        img = rendering.render_grid(
+        img = await asyncio.to_thread(
+            rendering.render_grid,
             columns, font_size=font_size, font_path=font_path,
             padding=padding, supersample=supersample,
             dither=dither, threshold=threshold,
@@ -243,7 +288,8 @@ class GoojPrtPT210:
         The barcode is rendered as a bitmap and padded to the full paper
         width according to ``align``.
         """
-        img = rendering.render_pdf417(
+        img = await asyncio.to_thread(
+            rendering.render_pdf417,
             data, scale=scale, row_height=row_height,
             columns=columns, padding=padding, min_rows=min_rows,
         )
@@ -267,7 +313,8 @@ class GoojPrtPT210:
         ``portrait=False`` (default) renders time running across the
         paper width.
         """
-        img = rendering.render_ekg(
+        img = await asyncio.to_thread(
+            rendering.render_ekg,
             beats=beats, height_px=height_px, line_width=line_width,
             grid=grid, grid_step_px=grid_step_px, amplitude=amplitude,
             portrait=portrait, px_per_beat=px_per_beat,
@@ -281,7 +328,19 @@ class GoojPrtPT210:
         table. For guaranteed diacritic support, use
         :meth:`print_text_image` instead.
         """
-        await self._ble.write(commands.charset(code_page))
+        await self._require_ble().write(commands.charset(code_page))
+
+    async def set_chinese_mode(self, enabled: bool) -> None:
+        """Enter (``FS &``) or cancel (``FS .``) the double-byte Chinese mode.
+
+        Printers that boot in GB18030 mode treat bytes ≥ 0x80 as half of a
+        two-byte character, which can garble single-byte code pages even
+        after :meth:`set_charset`. Cancelling the mode first may fix that;
+        :meth:`probe_charsets` prints each page with and without it so you
+        can see whether your unit cares. ``ESC @`` (:meth:`initialize`)
+        resets the printer, so call this afterwards.
+        """
+        await self._require_ble().write(commands.chinese_mode(enabled))
 
     async def query_printer_info(self, timeout: float = 2.0) -> dict:
         """Query model / firmware strings via ``GS I 1 / 2 / 3``.
@@ -291,21 +350,24 @@ class GoojPrtPT210:
             ``{"error": ...}`` when the printer does not expose a notify
             characteristic.
         """
-        if not self._ble.has_notify:
+        ble = self._require_ble()
+        if not ble.has_notify:
             return {"error": "Printer has no notify characteristic; responses cannot be read."}
 
         results = {}
+        # Epson numbers these 1 = model, 2 = type, 3 = ROM version; the
+        # mapping below predates that check and is kept for compatibility.
         queries = {
-            "model_id":     bytes([0x1D, 0x49, 0x01]),
-            "printer_type": bytes([0x1D, 0x49, 0x03]),
-            "firmware":     bytes([0x1D, 0x49, 0x02]),
+            "model_id":     commands.info_request(1),
+            "printer_type": commands.info_request(3),
+            "firmware":     commands.info_request(2),
         }
 
         raw_responses = []
         for key, cmd in queries.items():
-            self._ble.clear_notify_buffer()
-            await self._ble.write(cmd)
-            response = await self._ble.read_notify(timeout / len(queries))
+            ble.clear_notify_buffer()
+            await ble.write(cmd)
+            response = await ble.read_notify(timeout / len(queries))
             raw_responses.append(list(response))
             try:
                 results[key] = response.decode("ascii", errors="replace").strip("\x00").strip()
@@ -319,8 +381,12 @@ class GoojPrtPT210:
         """Read BLE Device Info (0x180A) + Battery (0x180F) + ESC/POS status + ``GS I``.
 
         :returns: A dictionary with keys ``ble_device``, ``ble_battery``,
-            ``escpos_status`` and ``escpos_info``.
+            ``escpos_status`` and ``escpos_info``. Every ``escpos_status``
+            entry (``printer``, ``offline``, ``error``, ``paper``) holds the
+            ``raw`` response byte, an ``ok`` verdict and the decoded
+            ``flags`` (see :mod:`goojprt.status`).
         """
+        ble = self._require_ble()
         info: dict = {}
 
         ble_device = {}
@@ -335,7 +401,7 @@ class GoojPrtPT210:
         }
         for key, uuid in ble_char_map.items():
             try:
-                raw = await self._ble.read_gatt(uuid)
+                raw = await ble.read_gatt(uuid)
                 if key == "system_id":
                     ble_device[key] = raw.hex(":")
                 else:
@@ -346,29 +412,30 @@ class GoojPrtPT210:
 
         battery: dict = {}
         try:
-            raw = await self._ble.read_gatt("00002a19-0000-1000-8000-00805f9b34fb")
+            raw = await ble.read_gatt("00002a19-0000-1000-8000-00805f9b34fb")
             battery["level_pct"] = raw[0]
         except Exception:
             pass
         info["ble_battery"] = battery
 
         escpos_status: dict = {}
-        if self._ble.has_notify:
+        if ble.has_notify:
             dle_queries = {
-                "printer":  bytes([0x10, 0x04, 0x01]),
-                "offline":  bytes([0x10, 0x04, 0x02]),
-                "error":    bytes([0x10, 0x04, 0x03]),
-                "paper":    bytes([0x10, 0x04, 0x04]),
+                "printer": status.PRINTER,
+                "offline": status.OFFLINE_CAUSE,
+                "error":   status.ERROR_CAUSE,
+                "paper":   status.PAPER_SENSOR,
             }
-            for key, cmd in dle_queries.items():
-                self._ble.clear_notify_buffer()
-                await self._ble.write(cmd)
-                response = await self._ble.read_notify(timeout / len(dle_queries))
+            for key, n in dle_queries.items():
+                ble.clear_notify_buffer()
+                await ble.write(commands.status_request(n))
+                response = await ble.read_notify(timeout / len(dle_queries))
                 if response:
                     byte = response[0]
                     escpos_status[key] = {
-                        "raw": byte,
-                        "ok":  not bool(byte & 0b00101000),
+                        "raw":   byte,
+                        "ok":    status.status_ok(n, byte),
+                        "flags": status.decode_status(n, byte),
                     }
         info["escpos_status"] = escpos_status
 
@@ -382,36 +449,52 @@ class GoojPrtPT210:
         self,
         test_string: str = "Příliš žluťoučký kůň",
         pages: list[CodePage] | None = None,
+        *,
+        try_chinese_mode_off: bool = True,
     ) -> None:
         """Print ``test_string`` using each code page plus a bitmap reference.
 
         Useful for verifying which code pages the firmware actually
         ships — compare the native outputs against the always-correct
         bitmap row at the bottom.
+
+        Each page is printed after a fresh ``ESC @``. With
+        ``try_chinese_mode_off`` (the default) every page is printed twice,
+        the second time after ``FS .`` — if only the second variant is
+        readable, call :meth:`set_chinese_mode` with ``False`` before
+        printing native text on your unit.
         """
         from goojprt.encoding import CODEPAGE_TO_ENCODING
 
         if pages is None:
             pages = [CodePage.PC437, CodePage.PC850, CodePage.PC852,
-                     CodePage.WPC1250, CodePage.PC858]
+                     CodePage.WPC1250, CodePage.WPC1250_STD, CodePage.PC858]
 
+        ble = self._require_ble()
         await self.initialize()
         await self.print_text_image("=== PROBE CHARSETS ===",
                                     align=Align.CENTER, font_size=20)
 
+        variants = (False, True) if try_chinese_mode_off else (False,)
         for cp in pages:
             encoding = CODEPAGE_TO_ENCODING.get(cp, "latin-1")
-            await self.print_text_image(
-                f"-- CodePage.{cp.name} (ESC t {cp.value}) --",
-                font_size=18, align=Align.LEFT,
-            )
-            await self._ble.write(commands.charset(cp))
             try:
                 encoded = test_string.encode(encoding, errors="replace")
             except LookupError:
                 encoded = test_string.encode("latin-1", errors="replace")
-            await self._ble.write(encoded + b"\n")
+            for chinese_off in variants:
+                suffix = " + FS ." if chinese_off else ""
+                await self.print_text_image(
+                    f"-- CodePage.{cp.name} (ESC t {cp.value}){suffix} --",
+                    font_size=18, align=Align.LEFT,
+                )
+                await self.initialize()
+                if chinese_off:
+                    await ble.write(commands.chinese_mode(False))
+                await ble.write(commands.charset(cp))
+                await ble.write(encoded + b"\n")
 
+        await self.initialize()
         await self.print_text_image(
             "=== Bitmap (always OK) ===\n" + test_string,
             font_size=22, align=Align.CENTER,
@@ -424,7 +507,7 @@ class GoojPrtPT210:
 
     def initialize_spp(self) -> None:
         """Initialise the printer over SPP (``ESC @``)."""
-        self._spp.write(commands.init())
+        self._require_spp().write(commands.init())
 
     def print_text_spp(
         self,
@@ -437,17 +520,17 @@ class GoojPrtPT210:
         encoding: str = "gb2312",
     ) -> None:
         """Print text over SPP (shares :func:`commands.build_text_block` with BLE)."""
-        self._spp.write(commands.build_text_block(
+        self._require_spp().write(commands.build_text_block(
             text, align, bold, underline, size, newline, encoding,
         ))
 
     def feed_spp(self, lines: int = 3) -> None:
         """Feed paper over SPP."""
-        self._spp.write(commands.feed(lines))
+        self._require_spp().write(commands.feed(lines))
 
     def cut_spp(self) -> None:
         """Trigger the cutter over SPP (no-op on PT-210)."""
-        self._spp.write(commands.cut())
+        self._require_spp().write(commands.cut())
 
     def print_qr_spp(
         self,
@@ -457,7 +540,7 @@ class GoojPrtPT210:
         error_correction: int = 1,
     ) -> None:
         """Print a QR code over SPP (shares :func:`commands.build_qr_block`)."""
-        self._spp.write(commands.build_qr_block(data, size, align, error_correction))
+        self._require_spp().write(commands.build_qr_block(data, size, align, error_correction))
 
     def print_image_spp(self, image, strip_height: int = 24) -> None:
         """Print a :class:`PIL.Image.Image` over SPP as an ESC/POS raster.
@@ -467,7 +550,7 @@ class GoojPrtPT210:
         """
         for strip in raster.image_to_raster_strips(image, strip_height=strip_height):
             rows = strip[6] | (strip[7] << 8)  # from GS v 0 header
-            self._spp.write_raster_strip(strip, rows=rows)
+            self._require_spp().write_raster_strip(strip, rows=rows)
 
     def print_pdf417_spp(
         self,

@@ -9,6 +9,7 @@ Unofficial Python SDK for the GOOJPRT PT-210 thermal printer (BLE / SPP).
 
    api/printer
    api/commands
+   api/status
    api/constants
    api/enums
    api/encoding

@@ -67,6 +67,35 @@ def charset(cp: CodePage) -> bytes:
     return bytes([0x1B, 0x74, int(cp)])
 
 
+def chinese_mode(enabled: bool) -> bytes:
+    """``FS &`` / ``FS .`` — enter or cancel the double-byte (Chinese) mode.
+
+    Many low-cost printers boot in GB18030 mode, where a byte ≥ 0x80 is the
+    first half of a two-byte character. Single-byte code pages selected
+    with :func:`charset` may only print correctly after the mode has been
+    cancelled with ``FS .``. Printers without a Chinese font ignore the
+    command.
+    """
+    return bytes([0x1C, 0x26 if enabled else 0x2E])
+
+
+def status_request(n: int) -> bytes:
+    """``DLE EOT n`` — real-time status request (``n`` = 1–4).
+
+    ``1`` printer, ``2`` offline cause, ``3`` error cause, ``4`` roll paper
+    sensor. The answer is one byte; see :mod:`goojprt.status`.
+    """
+    return bytes([0x10, 0x04, n])
+
+
+def info_request(n: int) -> bytes:
+    """``GS I n`` — printer identification request.
+
+    Epson numbering: ``1`` model id, ``2`` type id, ``3`` ROM version id.
+    """
+    return bytes([0x1D, 0x49, n])
+
+
 def energy(dots: int = 7, heating: int = 120, interval: int = 2) -> bytes:
     """``ESC 7 n1 n2 n3`` — configure thermal head heating parameters.
 
