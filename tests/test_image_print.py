@@ -1,6 +1,5 @@
 # tests/test_image_print.py
 """Unit tests for goojprt.rendering.image_print.prepare_image."""
-import numpy as np
 import pytest
 from PIL import Image
 
@@ -42,8 +41,7 @@ def test_dither_false_uses_threshold():
     white = Image.new("RGB", (50, 50), (255, 255, 255))
     result = prepare_image(white, dither=False, threshold=128)
     assert result.mode == "1"
-    arr = np.asarray(result, dtype=np.uint8)
-    assert arr.all()
+    assert result.convert("L").getextrema() == (255, 255)  # every pixel white
 
 
 def test_dither_true_ignores_threshold_param_and_still_returns_1bit():

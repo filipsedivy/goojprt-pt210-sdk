@@ -16,7 +16,24 @@ Two orientations are available:
   runs across the width, giving an unlimited-length recording.
 """
 
+import math
+
 from goojprt.constants import PAPER_WIDTH_PX
+
+#: PQRST wave model, one ``(amplitude, centre, sigma)`` Gaussian per wave
+#: over beat-local time ``t`` in ``[0, 1]``.
+_WAVES = (
+    ( 0.14,  0.15,  0.018),   # P
+    (-0.06,  0.245, 0.007),   # Q
+    ( 1.00,  0.270, 0.009),   # R
+    (-0.18,  0.300, 0.007),   # S
+    ( 0.30,  0.440, 0.045),   # T
+)
+
+
+def _signal(t: float) -> float:
+    """Evaluate the ECG signal at beat-local time ``t`` ∈ [0, 1]."""
+    return sum(a * math.exp(-((t - mu) ** 2) / (2 * sig ** 2)) for a, mu, sig in _WAVES)
 
 
 def render_ekg(
@@ -44,42 +61,23 @@ def render_ekg(
         paper. More pixels means a more detailed curve.
     :returns: PIL image in mode ``"1"``.
     """
-    import numpy as np
-
-    WAVES = np.array([
-        ( 0.14,  0.15,  0.018),   # P
-        (-0.06,  0.245, 0.007),   # Q
-        ( 1.00,  0.270, 0.009),   # R
-        (-0.18,  0.300, 0.007),   # S
-        ( 0.30,  0.440, 0.045),   # T
-    ])  # shape (5, 3): columns are amplitude, mu, sigma
-
-    def signal_array(t: np.ndarray) -> np.ndarray:
-        """Evaluate ECG signal for an array of beat-local times ``t`` ∈ [0, 1]."""
-        a, mu, sig = WAVES[:, 0], WAVES[:, 1], WAVES[:, 2]
-        return np.sum(a * np.exp(-((t[:, None] - mu) ** 2) / (2 * sig ** 2)), axis=1)
-
     if portrait:
         return _render_ekg_portrait(
-            beats, px_per_beat, line_width, grid, grid_step_px,
-            amplitude, signal_array,
+            beats, px_per_beat, line_width, grid, grid_step_px, amplitude,
         )
     return _render_ekg_landscape(
-        beats, height_px, line_width, grid, grid_step_px,
-        amplitude, signal_array,
+        beats, height_px, line_width, grid, grid_step_px, amplitude,
     )
 
 
 def _render_ekg_landscape(beats, height_px, line_width, grid, grid_step_px,
-                          amplitude, signal_array):
+                          amplitude):
     """Render a landscape (time → horizontal) ECG strip."""
-    import numpy as np
     from PIL import Image as PILImage, ImageDraw
 
     width = PAPER_WIDTH_PX
-    i = np.arange(width)
-    t = (i % (width / beats)) / (width / beats)
-    raw = signal_array(t).tolist()
+    period = width / beats
+    raw = [_signal((i % period) / period) for i in range(width)]
 
     sig_min, sig_max = min(raw), max(raw)
     sig_range = sig_max - sig_min or 1.0
@@ -124,21 +122,18 @@ def _render_ekg_landscape(beats, height_px, line_width, grid, grid_step_px,
 
 
 def _render_ekg_portrait(beats, px_per_beat, line_width, grid, grid_step_px,
-                         amplitude, signal_array):
+                         amplitude):
     """Render a portrait (time → vertical) ECG strip.
 
     Produces an image of width :data:`PAPER_WIDTH_PX` and height
     ``beats × px_per_beat``, suitable for long scrolling recordings.
     """
-    import numpy as np
     from PIL import Image as PILImage, ImageDraw
 
     width = PAPER_WIDTH_PX
     total_rows = beats * px_per_beat
 
-    rows = np.arange(total_rows)
-    t = (rows % px_per_beat) / px_per_beat
-    raw = signal_array(t).tolist()
+    raw = [_signal((row % px_per_beat) / px_per_beat) for row in range(total_rows)]
 
     sig_min, sig_max = min(raw), max(raw)
     sig_range = sig_max - sig_min or 1.0

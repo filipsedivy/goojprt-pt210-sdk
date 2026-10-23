@@ -26,6 +26,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra server --extra test
 
+      # The test environment above includes the dev group; this one holds only
+      # what `pip install goojprt-pt210-sdk` installs, so an undeclared runtime
+      # dependency fails here instead of on a user's machine.
+      - name: Smoke test (runtime dependencies only)
+        run: uv run --isolated --no-dev --frozen python scripts/smoke_runtime.py
+
       - name: Run type checks
         run: uv run basedpyright
 
