@@ -158,9 +158,11 @@ class GoojPrtPT210:
             print faster if your unit keeps up, raise it if bytes get lost.
 
         ``on_disconnect``, ``chunk_size`` and ``chunk_delay`` apply when the
-        transport is created, i.e. on the first connect.
+        transport is created, i.e. on the first connect. A preview transport
+        attached with :meth:`connect_preview` is replaced by a real one, so
+        printing can never silently go into the preview.
         """
-        if self._ble is None:
+        if self._ble is None or isinstance(self._ble, PreviewTransport):
             kwargs = {}
             if chunk_size is not None:
                 kwargs["chunk_size"] = chunk_size
@@ -193,7 +195,14 @@ class GoojPrtPT210:
             preview.save("preview.png")
 
         Native ESC/POS text and QR codes appear only as dashed notes.
+
+        :raises RuntimeError: While a BLE connection is open — it would be
+            orphaned; call :meth:`disconnect` first.
         """
+        current = self._ble
+        if (current is not None and not isinstance(current, PreviewTransport)
+                and current.is_connected):
+            raise RuntimeError("connect_preview(): a BLE connection is open; call disconnect() first.")
         transport = PreviewTransport()
         self._ble = transport
         return transport

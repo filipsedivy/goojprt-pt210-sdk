@@ -1,6 +1,7 @@
 """PreviewTransport: faithfulness of the rendered preview and handling of native commands."""
 import random
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from PIL import Image
@@ -11,6 +12,7 @@ from goojprt.enums import Align
 from goojprt.printer import GoojPrtPT210
 from goojprt.raster import _normalize_to_paper_width, raster_to_image
 from goojprt.rendering import render_ekg, render_grid, render_pdf417, render_text_image
+from goojprt.transport.ble import BleTransport
 from goojprt.transport.preview import PreviewTransport, _describe_native
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -276,3 +278,52 @@ class TestTransport:
         printer, preview = _facade()
         await printer.disconnect()
         assert not preview.is_connected
+
+
+# ── the preview and the real transport never swap places silently ────────────
+
+class TestTransportSwitching:
+    @pytest.mark.asyncio
+    async def test_connect_ble_after_a_preview_uses_a_real_transport(self):
+        printer, preview = _facade()
+        real = MagicMock(spec=BleTransport)
+        real.connect = AsyncMock()
+        with patch("goojprt.printer.BleTransport", return_value=real) as factory:
+            await printer.connect_ble("AA:BB")
+        factory.assert_called_once()
+        real.connect.assert_awaited_once_with("AA:BB")
+        assert printer._ble is real
+        assert printer._ble is not preview
+
+    @pytest.mark.asyncio
+    async def test_printing_after_that_reaches_the_real_transport(self):
+        printer, preview = _facade()
+        real = MagicMock(spec=BleTransport)
+        real.connect = AsyncMock()
+        real.write = AsyncMock()
+        with patch("goojprt.printer.BleTransport", return_value=real):
+            await printer.connect_ble("AA:BB")
+        await printer.print_text("hello")
+        real.write.assert_awaited_once()
+        assert preview.native_commands == 0
+
+    def test_connect_preview_refuses_while_a_ble_link_is_open(self):
+        printer = GoojPrtPT210()
+        live = MagicMock(spec=BleTransport)
+        live.is_connected = True
+        printer._ble = live
+        with pytest.raises(RuntimeError, match="disconnect"):
+            printer.connect_preview()
+        assert printer._ble is live            # untouched, so it can still be disconnected
+
+    def test_connect_preview_is_fine_after_the_ble_link_closed(self):
+        printer = GoojPrtPT210()
+        closed = MagicMock(spec=BleTransport)
+        closed.is_connected = False
+        printer._ble = closed
+        assert isinstance(printer.connect_preview(), PreviewTransport)
+
+    def test_connect_preview_again_starts_a_fresh_recording(self):
+        printer, first = _facade()
+        second = printer.connect_preview()
+        assert second is not first and printer._ble is second
