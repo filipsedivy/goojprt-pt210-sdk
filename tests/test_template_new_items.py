@@ -16,7 +16,7 @@ def _printer() -> MagicMock:
     for name in (
         "connect_ble", "initialize", "disconnect", "print_text_image", "print_text",
         "print_pdf417", "print_qr", "print_line", "feed", "cut", "print_grid",
-        "print_ekg", "set_charset", "set_chinese_mode",
+        "print_ekg", "set_charset", "set_chinese_mode", "print_image",
     ):
         setattr(p, name, AsyncMock())
     return p
@@ -114,7 +114,7 @@ async def test_example_prints_end_to_end_against_a_mock_printer(path):
     printer.disconnect.assert_awaited_once()
     printed = [
         name for name in ("print_text", "print_text_image", "print_qr", "print_grid",
-                          "print_line", "set_charset", "set_chinese_mode")
+                          "print_line", "print_image", "set_charset", "set_chinese_mode")
         if getattr(printer, name).await_count
     ]
     assert printed, "the template printed nothing"

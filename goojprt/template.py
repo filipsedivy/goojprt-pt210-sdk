@@ -10,10 +10,12 @@ Supported item types are listed in :data:`ITEM_TYPES`; see
 warning on stdout and are skipped.
 """
 
+import asyncio
 import datetime
 import re
 import secrets
 import tomllib
+from pathlib import Path
 
 from goojprt.enums import Align, CodePage, TextSize
 from goojprt.printer import GoojPrtPT210
@@ -21,8 +23,12 @@ from goojprt.printer import GoojPrtPT210
 #: Item ``type`` values understood by :func:`print_template`.
 ITEM_TYPES = frozenset({
     "text_image", "text", "pdf417", "qr", "line", "feed", "cut", "grid", "ekg",
-    "charset", "chinese_mode",
+    "charset", "chinese_mode", "image",
 })
+
+
+class TemplateError(ValueError):
+    """A template cannot be printed (for example an image that cannot be read)."""
 
 
 def random_password(length: int) -> str:
@@ -112,6 +118,53 @@ def substitute_deep(obj, variables: dict[str, str]):
     return obj
 
 
+def _prepare_image_item(index: int, item: dict, base_dir: Path):
+    """Open and prepare the picture of one ``image`` item (blocking).
+
+    :raises TemplateError: When the path is missing, the file cannot be read
+        or an option is invalid.
+    """
+    from PIL import Image
+
+    from goojprt.rendering.image_print import prepare_image
+
+    name = item.get("path")
+    if not name:
+        raise TemplateError(f"item {index + 1} (image): missing 'path'")
+    file = Path(name)
+    if not file.is_absolute():
+        file = base_dir / file
+    try:
+        with Image.open(file) as source:
+            return prepare_image(
+                source,
+                rotate=item.get("rotate", 0),
+                scale=item.get("scale", 1.0),
+                fit=item.get("fit", "shrink"),
+                brightness=item.get("brightness", 1.0),
+                contrast=item.get("contrast", 1.0),
+                threshold=item.get("threshold", 128),
+                dither=item.get("dither", True),
+                align=item.get("align", "center"),
+            )
+    except OSError as exc:  # includes FileNotFoundError and PIL.UnidentifiedImageError
+        raise TemplateError(f"item {index + 1} (image): cannot read {str(file)!r}: {exc}") from exc
+    except ValueError as exc:
+        raise TemplateError(f"item {index + 1} (image): {exc}") from exc
+
+
+async def _prepare_images(items: list[dict], base_dir: Path) -> dict[int, object]:
+    """Prepare every ``image`` item up front, keyed by item index.
+
+    Done before connecting, so a missing logo fails before any paper is used.
+    """
+    return {
+        i: await asyncio.to_thread(_prepare_image_item, i, item, base_dir)
+        for i, item in enumerate(items)
+        if item.get("type") == "image"
+    }
+
+
 async def print_template(
     address: str,
     path: str,
@@ -125,9 +178,16 @@ async def print_template(
     (``enabled = false``); both affect the native ``text`` items that
     follow. Unknown types print a warning on stdout and are skipped.
 
+    An ``image`` item prints a picture (``path`` is relative to the template
+    file; ``fit``, ``scale``, ``align``, ``dither``, ``threshold``,
+    ``brightness``, ``contrast`` and ``rotate`` as in
+    :func:`~goojprt.rendering.image_print.prepare_image`). Pictures are
+    opened before the printer is touched.
+
     :param address: Bluetooth address / UUID of the printer.
     :param path: Filesystem path to a ``.toml`` template.
     :param extra_vars: Additional variables (e.g. ``--var name=Filip``).
+    :raises TemplateError: When an ``image`` item cannot be prepared.
     """
     with open(path, "rb") as f:
         tmpl = tomllib.load(f)
@@ -147,6 +207,9 @@ async def print_template(
         "double_both":   TextSize.DOUBLE_BOTH,
     }
 
+    items = [substitute_deep(item, variables) for item in items]
+    images = await _prepare_images(items, Path(path).resolve().parent)
+
     printer = GoojPrtPT210()
     print(f"Connecting to {address} ...")
     await printer.connect_ble(address)
@@ -155,7 +218,6 @@ async def print_template(
 
     for i, item in enumerate(items):
         kind = item.get("type", "")
-        item = substitute_deep(item, variables)
         print(f"  [{i+1}/{len(items)}] {kind}")
 
         if kind == "text_image":
@@ -169,7 +231,10 @@ async def print_template(
                 supersample=item.get("supersample", 3),
                 dither=item.get("dither", True),
                 threshold=item.get("threshold", 140),
+                wrap=item.get("wrap", True),
             )
+        elif kind == "image":
+            await printer.print_image(images[i])
         elif kind == "text":
             await printer.print_text(
                 item["text"],

@@ -54,6 +54,7 @@ def _prepare_image(p: dict):
         threshold=p.get("threshold", 128),
         dither=p.get("dither", True),
         scale=p.get("scale", 1.0),
+        fit=p.get("fit", "shrink"),
         align=p.get("align", "center"),
     )
 

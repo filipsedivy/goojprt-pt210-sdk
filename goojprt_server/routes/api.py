@@ -6,6 +6,8 @@ import base64
 import logging
 import time
 
+from typing import Literal
+
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
@@ -131,6 +133,7 @@ async def print_image(
     threshold: int = Form(128),
     dither: bool = Form(True),
     scale: float = Form(1.0),
+    fit: Literal["none", "shrink", "width"] = Form("shrink"),
     align: str = Form("center"),
     feed_after: int = Form(0),
 ) -> JobAcceptedResponse:
@@ -146,6 +149,7 @@ async def print_image(
         "threshold": threshold,
         "dither": dither,
         "scale": scale,
+        "fit": fit,
         "align": align,
         "feed_after": feed_after,
     }

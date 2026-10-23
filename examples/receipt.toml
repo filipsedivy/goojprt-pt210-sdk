@@ -1,8 +1,14 @@
-# A small receipt built from bitmap text and a table grid (always prints
-# diacritics correctly).
+# A small receipt built from a logo, bitmap text and a table grid (always
+# prints diacritics correctly). logo.png is 640 px wide; `fit = "shrink"` (the
+# default) scales it down to the paper instead of cutting it off.
 #
 #   goojprt <address> --template examples/receipt.toml \
 #       --var shop="Corner Shop" --var total="12.50"
+
+[[items]]
+type = "image"
+path = "logo.png"          # relative to this file
+align = "center"
 
 [[items]]
 type = "text_image"

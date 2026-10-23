@@ -234,19 +234,22 @@ class GoojPrtPT210:
         supersample: int = 3,
         dither: bool = True,
         threshold: int = 140,
+        wrap: bool = True,
     ) -> None:
         """Print text as an antialiased bitmap (full Unicode / diacritics).
 
         Unlike :meth:`print_text`, this method does not depend on the
         firmware code page: the text is rendered via PIL with LANCZOS
         resampling and Floyd–Steinberg dithering, so any installed font
-        produces a readable result.
+        produces a readable result. Lines wider than the paper are
+        word-wrapped unless ``wrap`` is ``False``.
         """
         img = await asyncio.to_thread(
             rendering.render_text_image,
             text, font_size=font_size, font_path=font_path,
             line_spacing=line_spacing, padding=padding, align=align,
             supersample=supersample, dither=dither, threshold=threshold,
+            wrap=wrap,
         )
         await self.print_image(img)
 

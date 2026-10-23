@@ -70,3 +70,50 @@ async def test_print_image_job_appears_in_listing(client, fake_printer):
     listing = await client.get("/api/jobs?limit=10")
     ids = [j["id"] for j in listing.json()]
     assert job_id in ids
+
+
+def _printed_images(fake_printer):
+    return [c[1]["image"] for c in fake_printer.calls if c[0] == "print_image"]
+
+
+async def test_wide_image_is_fitted_to_the_paper_by_default(client, fake_printer):
+    r = await client.post(
+        "/api/print/image",
+        files={"file": ("big.png", _png_bytes(1000, 500), "image/png")},
+    )
+    job = await _wait_done(client, r.json()["job_id"])
+    assert job["status"] == "done"
+    image, = _printed_images(fake_printer)
+    assert image.width == 384
+    assert image.height == 192      # scaled down, not cropped
+
+
+async def test_fit_none_keeps_the_source_width(client, fake_printer):
+    r = await client.post(
+        "/api/print/image",
+        files={"file": ("big.png", _png_bytes(1000, 500), "image/png")},
+        data={"fit": "none"},
+    )
+    await _wait_done(client, r.json()["job_id"])
+    image, = _printed_images(fake_printer)
+    assert image.width == 1000
+
+
+async def test_fit_width_enlarges_a_small_image(client, fake_printer):
+    r = await client.post(
+        "/api/print/image",
+        files={"file": ("small.png", _png_bytes(50, 50, (0, 0, 0)), "image/png")},
+        data={"fit": "width"},
+    )
+    await _wait_done(client, r.json()["job_id"])
+    image, = _printed_images(fake_printer)
+    assert (image.width, image.height) == (384, 384)
+
+
+async def test_unknown_fit_value_is_rejected(client):
+    r = await client.post(
+        "/api/print/image",
+        files={"file": ("x.png", _png_bytes(), "image/png")},
+        data={"fit": "stretch"},
+    )
+    assert r.status_code == 422
