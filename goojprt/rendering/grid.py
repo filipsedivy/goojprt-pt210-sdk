@@ -3,6 +3,10 @@
 from goojprt.constants import PAPER_WIDTH_PX
 from goojprt.encoding import find_system_font
 
+#: Glyphs that reach furthest above and below the baseline in Latin text
+#: (accented capitals, descenders): they size the fixed line box of a row.
+_EXTENT_SAMPLE = "ÁČĎĚŇŘŠŤŽÝÅÖ gjpqyQ,;"
+
 
 def render_grid(
     columns: list[dict],
@@ -16,7 +20,9 @@ def render_grid(
     """Render a single row of a multi-column table as a 1-bit image.
 
     Each column is rendered into its own sub-canvas; text that overflows
-    the column width is cropped automatically. Column widths are relative
+    the column width is cropped automatically. With a TrueType font every
+    row has the same height and baseline whatever it contains, so consecutive
+    rows of a table line up (accented capitals no longer make a row taller). Column widths are relative
     — they do not need to sum to 100; they are re-normalised to match
     the print head width.
 
@@ -65,14 +71,23 @@ def render_grid(
 
     pad = padding * ss
 
-    # Determine the height of the tallest piece of text in the row.
     probe_draw = ImageDraw.Draw(PILImage.new("L", (1, 1)))
-    max_text_h = font_size * ss  # fallback
-    for col in columns:
-        text = col.get("text", "")
-        if text:
-            bb = probe_draw.textbbox((0, 0), text, font=font)
-            max_text_h = max(max_text_h, bb[3] - bb[1])
+    # TrueType fonts get one fixed line box (and baseline) for every row; the
+    # legacy bitmap font has no metrics and is sized from the text instead.
+    fixed_box = hasattr(font, "getmetrics")
+    ascent = 0
+    if fixed_box:
+        ascent, descent = font.getmetrics()  # type: ignore[union-attr]
+        _, top, _, bottom = probe_draw.textbbox((0, 0), _EXTENT_SAMPLE, font=font, anchor="ls")
+        ascent, descent = max(ascent, int(-top)), max(descent, int(bottom))
+        max_text_h = ascent + descent
+    else:
+        max_text_h = font_size * ss  # fallback
+        for col in columns:
+            text = col.get("text", "")
+            if text:
+                bb = probe_draw.textbbox((0, 0), text, font=font)
+                max_text_h = max(max_text_h, bb[3] - bb[1])
 
     render_height = int(max_text_h) + 2 * pad
 
@@ -101,10 +116,13 @@ def render_grid(
         sub = PILImage.new("L", (col_w, render_height), 255)
         if text:
             sub_draw = ImageDraw.Draw(sub)
-            bb = probe_draw.textbbox((0, 0), text, font=font)
-            text_w = bb[2] - bb[0]
-            text_h = bb[3] - bb[1]
-            y = (render_height - text_h) // 2  # vertically centred
+            if fixed_box:
+                text_w = probe_draw.textlength(text, font=font)
+            else:
+                bb = probe_draw.textbbox((0, 0), text, font=font)
+                text_w = bb[2] - bb[0]
+                text_h = bb[3] - bb[1]
+                y = (render_height - text_h) // 2  # vertically centred
 
             if align == "right":
                 x = col_w - text_w - pad
@@ -113,7 +131,10 @@ def render_grid(
             else:  # left
                 x = pad
 
-            sub_draw.text((x, y), text, font=font, fill=0)
+            if fixed_box:
+                sub_draw.text((x, pad + ascent), text, font=font, fill=0, anchor="ls")
+            else:
+                sub_draw.text((x, y), text, font=font, fill=0)
 
         canvas.paste(sub, (x_offset, 0))
         x_offset += col_w
