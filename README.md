@@ -117,6 +117,16 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+The session helper connects, initialises and always disconnects, also when printing fails:
+
+```python
+async with GoojPrtPT210.ble("XX:XX:XX:XX:XX:XX") as printer:
+    await printer.print_text("Hello, world!")
+    await printer.feed(3)
+```
+
+(`GoojPrtPT210.spp(...)` does the same for classic Bluetooth with a plain `with`.)
+
 ### Print bitmap text (full Unicode / diacritics)
 
 ```python
@@ -125,6 +135,29 @@ await printer.print_text_image(
     font_size=28,
 )
 ```
+
+Lines wider than the paper are word-wrapped (`wrap=False` to turn that off).
+
+### Print an image
+
+```python
+from PIL import Image
+from goojprt.rendering.image_print import prepare_image
+
+await printer.print_image(prepare_image(Image.open("photo.jpg")))        # scaled down to the paper
+await printer.print_image(prepare_image(Image.open("logo.png"), fit="width", dither=False))
+```
+
+`fit="shrink"` (the default) never makes the picture wider than the paper, `"width"` fills the paper, `"none"` keeps the source size and cuts off whatever is wider.
+
+### Print darker or lighter
+
+```python
+await printer.initialize()
+await printer.set_density("dark")        # or "light", "normal", or a heating time 0-255
+```
+
+The presets are uncalibrated starting points, and whether a given unit honours `ESC 7` has not been verified.
 
 ### Print a QR code
 
@@ -143,11 +176,18 @@ await printer.print_pdf417("1234567890ABCDEF", columns=5, scale=2)
 ## CLI
 
 ```bash
+# Find the printer (on macOS the "address" is a UUID), then keep it in the environment
+goojprt --scan
+export GOOJPRT_ADDRESS=XX:XX:XX:XX:XX:XX      # optional: the address argument can then be left out
+
 # BLE demo print
 goojprt XX:XX:XX:XX:XX:XX
 
 # Bitmap text with antialiasing
 goojprt XX:XX:XX:XX:XX:XX --print-image "Příliš žluťoučký kůň"
+
+# An image file, scaled down to the paper, printed darker
+goojprt XX:XX:XX:XX:XX:XX --print-file photo.jpg --density dark
 
 # PDF417 barcode
 goojprt XX:XX:XX:XX:XX:XX --pdf417 "data"
@@ -160,6 +200,25 @@ goojprt XX:XX:XX:XX:XX:XX --test
 ```
 
 Run `goojprt --help` for all options.
+
+### Preview without a printer
+
+`--preview OUT.png` renders `--template`, `--print-image`, `--print-file` and `--pdf417` into a PNG instead of printing, so layouts can be built without wasting paper (and without an address):
+
+```bash
+goojprt --template examples/receipt.toml --var shop="Corner Shop" --var total=12.50 --preview receipt.png
+```
+
+Everything drawn as a bitmap appears exactly as it would print — the preview is checked pixel for pixel against the real raster stream. Native ESC/POS text (`text` items, `print_text`), separator lines and QR codes are produced by the printer firmware and cannot be rendered; they show up as dashed notes with their content, and the command reports how many there were.
+
+In Python, `printer.connect_preview()` attaches the same recorder to any facade, and the server offers `POST /api/preview/{text,pdf417,ekg,grid,image}` which return the PNG (header `X-Preview-Native-Commands` counts the unrenderable parts). Previews never touch the print queue or the printer.
+
+```python
+printer = GoojPrtPT210()
+preview = printer.connect_preview()
+await printer.print_text_image("Příliš žluťoučký kůň")
+preview.save("preview.png")
+```
 
 ---
 
@@ -211,7 +270,7 @@ lines = 4
 
 Variables like `{{date}}`, `{{time}}`, `{{expire_24h}}`, `{{password_12}}` are built-in. Pass custom variables with `--var KEY=VALUE`.
 
-Item types: `text`, `text_image`, `qr`, `pdf417`, `grid`, `ekg`, `line`, `feed`, `cut`, `charset`, `chinese_mode`. Ready-to-run samples are in [`examples/`](examples/): a receipt, a guest Wi-Fi voucher with a QR code, and a native-text experiment.
+Item types: `text`, `text_image`, `image`, `qr`, `pdf417`, `grid`, `ekg`, `line`, `feed`, `cut`, `charset`, `chinese_mode`, `density`. An `image` item (`path` is relative to the template file, plus `fit`, `scale`, `align`, `dither`, …) prints a logo; it is opened before the printer is touched, so a missing file fails before any paper is used. Ready-to-run samples are in [`examples/`](examples/): a receipt with a logo, a guest Wi-Fi voucher with a QR code, and a native-text experiment.
 
 ---
 
@@ -233,6 +292,9 @@ await printer.connect_ble("XX:XX:XX:XX:XX:XX", chunk_delay=0.02)
 
 - `TextSize.DOUBLE_HEIGHT`, `DOUBLE_WIDTH` and `DOUBLE_BOTH` now produce 1×2, 2×1 and 2×2 characters as their names say. They used to send `0x11`, `0x20` and `0x31` (2×2, 3×1, 4×2), so existing output with `size=` will look different.
 - `print_text` / `text_to_bytes` replace unencodable characters with `?` instead of switching the whole string to UTF-8.
+- Images wider than the paper are now scaled down (`fit="shrink"`) instead of having their right part cut off when printed. Anything that already fitted — including callers that compensate with `scale` ≈ 384 / width — prints exactly as before; `fit="none"` restores the old behaviour for wide images.
+- Bitmap text (`print_text_image`, `text_image` items, `render_text_image`) word-wraps lines wider than the paper instead of running them off the edge. Lines that fit are unchanged; pass `wrap=False` for the old behaviour.
+- `commands.energy()` raises `ValueError` outside 0–255 instead of wrapping the value around.
 - `numpy` is no longer needed: bitmap printing used to fail with `ModuleNotFoundError` on a plain `pip install`.
 
 ---
