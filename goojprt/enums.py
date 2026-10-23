@@ -58,3 +58,9 @@ class CodePage(IntEnum):
     #: which of the two really is CP1250 depends on the firmware — run
     #: ``goojprt <addr> --test`` to find out.
     WPC1250_STD = 45
+    #: The following numbers follow the common ESC/POS tables
+    #: (escpos-printer-db) and are untested on this SDK's hardware.
+    CP775 = 33          # Baltic
+    ISO8859_2 = 39      # Latin-2 (Central European), includes all Czech letters
+    ISO8859_15 = 40     # Latin-9 (Western European with Euro)
+    WPC1251 = 46        # Windows Cyrillic

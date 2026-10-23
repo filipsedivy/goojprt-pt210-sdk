@@ -29,6 +29,10 @@ CODEPAGE_TO_ENCODING: dict[int, str] = {
     CodePage.PC852:   "cp852",
     CodePage.WPC1250: "cp1250",
     CodePage.WPC1250_STD: "cp1250",
+    CodePage.CP775:       "cp775",
+    CodePage.ISO8859_2:   "iso8859_2",
+    CodePage.ISO8859_15:  "iso8859_15",
+    CodePage.WPC1251:     "cp1251",
     CodePage.PC866:   "cp866",
     CodePage.PC858:   "cp858",
 }

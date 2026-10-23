@@ -21,7 +21,9 @@ from contextlib import asynccontextmanager, contextmanager
 
 from goojprt import commands, raster, rendering, status
 from goojprt.constants import PAPER_WIDTH_PX
+from goojprt.encoding import CODEPAGE_TO_ENCODING
 from goojprt.enums import Align, CodePage, TextSize
+from goojprt.profile import CANDIDATES, CANDIDATE_LETTERS, CZECH_TEST_TEXT, TextProfile
 from goojprt.transport import BleTransport, PreviewTransport, SppTransport
 
 log = logging.getLogger(__name__)
@@ -80,6 +82,8 @@ class GoojPrtPT210:
         """Create an empty driver. Transports are attached on first connect."""
         self._ble: BleTransport | PreviewTransport | None = None
         self._spp: SppTransport | None = None
+        self._profile: TextProfile | None = None
+        self._text_encoding: str | None = None
 
     @classmethod
     @asynccontextmanager
@@ -256,8 +260,68 @@ class GoojPrtPT210:
     # ------------------------------------------------------------------ #
 
     async def initialize(self) -> None:
-        """Initialise the printer (``ESC @``) — reset to factory defaults."""
-        await self._require_ble().write(commands.init())
+        """Initialise the printer (``ESC @``) — reset to factory defaults.
+
+        A profile set with :meth:`apply_profile` is sent again straight after
+        the reset (in the same write), so it survives re-initialisation and
+        reconnects. Without one, the remembered text encoding is forgotten
+        along with the printer's code page.
+        """
+        data = commands.init()
+        encoding = None
+        if self._profile is not None:
+            data += self._profile_bytes(self._profile)
+            encoding = self._profile.encoding
+        await self._require_ble().write(data)
+        self._text_encoding = encoding
+
+    @property
+    def text_encoding(self) -> str | None:
+        """Codec :meth:`print_text` uses when no ``encoding`` is given, or ``None`` (GB2312)."""
+        return self._text_encoding
+
+    @staticmethod
+    def _profile_bytes(profile: TextProfile) -> bytes:
+        """``[FS .] ESC t n`` for ``profile``."""
+        prefix = commands.chinese_mode(False) if profile.chinese_mode_off else b""
+        return prefix + commands.charset(profile.code_page)
+
+    async def apply_profile(self, profile: TextProfile) -> None:
+        """Select the profile's code page now and after every :meth:`initialize`.
+
+        Afterwards :meth:`print_text` encodes with the profile's codec by
+        default, so native text with diacritics needs no ``encoding=`` and no
+        bitmap rendering. Find a profile with ``goojprt <addr> --calibrate``.
+        """
+        await self._require_ble().write(self._profile_bytes(profile))
+        self._profile = profile
+        self._text_encoding = profile.encoding
+
+    async def clear_profile(self) -> None:
+        """Forget the profile and reset the printer to its defaults."""
+        self._profile = None
+        await self.initialize()
+
+    async def use_codepage(
+        self,
+        code_page: "CodePage | int",
+        *,
+        chinese_mode_off: bool = True,
+        encoding: str | None = None,
+    ) -> None:
+        """Shortcut for :meth:`apply_profile` with a code page and its usual codec.
+
+        :param code_page: ``ESC t`` table, e.g. ``CodePage.PC852``.
+        :param chinese_mode_off: Send ``FS .`` first (see :meth:`set_chinese_mode`).
+        :param encoding: Codec for the table; defaults to the one known for
+            ``code_page``.
+        :raises ValueError: When no codec is known for the table and none is given.
+        """
+        if encoding is None:
+            encoding = CODEPAGE_TO_ENCODING.get(int(code_page))
+            if encoding is None:
+                raise ValueError(f"no codec is known for code page {int(code_page)}; pass encoding=")
+        await self.apply_profile(TextProfile(int(code_page), encoding, chinese_mode_off))
 
     async def print_text(
         self,
@@ -267,7 +331,7 @@ class GoojPrtPT210:
         underline: bool = False,
         size: TextSize = TextSize.NORMAL,
         newline: bool = True,
-        encoding: str = "gb2312",
+        encoding: str | None = None,
     ) -> None:
         """Print formatted text over BLE using the native ESC/POS engine.
 
@@ -277,11 +341,49 @@ class GoojPrtPT210:
         :param underline: Enable underlined printing.
         :param size: Character size multiplier.
         :param newline: Append a trailing line feed after the text.
-        :param encoding: Python codec name used for byte encoding.
+        :param encoding: Python codec name used for byte encoding. Defaults to
+            the codec of the active profile / :meth:`set_charset`, else GB2312.
         """
         await self._require_ble().write(commands.build_text_block(
-            text, align, bold, underline, size, newline, encoding,
+            text, align, bold, underline, size, newline,
+            encoding or self._text_encoding or "gb2312",
         ))
+
+    def _can_print_natively(self, line: str) -> bool:
+        """Whether ``line`` survives the active native encoding unchanged."""
+        if line.isascii():
+            return True
+        if self._text_encoding is None:
+            return False
+        try:
+            line.encode(self._text_encoding)
+        except UnicodeEncodeError:
+            return False
+        return True
+
+    async def print_text_auto(
+        self,
+        text: str,
+        align: Align = Align.LEFT,
+        bold: bool = False,
+        underline: bool = False,
+        size: TextSize = TextSize.NORMAL,
+        font_size: int = 24,
+    ) -> None:
+        """Print each line natively when the active code page can show it, else as a bitmap.
+
+        With a profile for your language (:meth:`apply_profile`) ordinary text
+        with diacritics prints natively — fast and small — while a line that
+        contains a character the table lacks (a euro sign in CP852, say) is
+        rendered as a bitmap instead of printing garbage. Without a profile
+        only plain ASCII goes the native way. ``bold``, ``underline`` and
+        ``size`` apply to native lines only; ``font_size`` to bitmap lines.
+        """
+        for line in text.split("\n"):
+            if self._can_print_natively(line):
+                await self.print_text(line, align, bold, underline, size)
+            else:
+                await self.print_text_image(line, font_size=font_size, align=align)
 
     async def print_line(self, char: str = "-", encoding: str = "ascii") -> None:
         """Print a horizontal rule built from a repeated character.
@@ -447,6 +549,7 @@ class GoojPrtPT210:
         :meth:`print_text_image` instead.
         """
         await self._require_ble().write(commands.charset(code_page))
+        self._text_encoding = CODEPAGE_TO_ENCODING.get(int(code_page))
 
     async def set_chinese_mode(self, enabled: bool) -> None:
         """Enter (``FS &``) or cancel (``FS .``) the double-byte Chinese mode.
@@ -611,6 +714,40 @@ class GoojPrtPT210:
 
         return info
 
+    async def print_charset_calibration(
+        self,
+        text: str = CZECH_TEST_TEXT,
+        candidates: "tuple[TextProfile, ...] | list[TextProfile]" = CANDIDATES,
+    ) -> dict[str, TextProfile]:
+        """Print ``text`` once per candidate profile, each line labelled with a letter.
+
+        Look at the paper and pick the letter whose line shows ``text``
+        exactly; the returned mapping turns it back into a
+        :class:`~goojprt.profile.TextProfile` that :meth:`apply_profile`
+        accepts. Every line starts from a fresh ``ESC @``; the previously
+        applied profile (if any) is restored at the end.
+
+        :returns: ``{letter: profile}`` in the order printed.
+        """
+        ble = self._require_ble()
+        letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        if len(candidates) > len(letters):
+            raise ValueError(f"at most {len(letters)} candidates fit on one sheet")
+        sheet = dict(zip(letters, candidates))
+
+        await self.print_text_image("NATIVNI TEXT - KALIBRACE", font_size=20,
+                                    align=Align.CENTER, wrap=False)
+        for letter, profile in sheet.items():
+            await self.print_text_image(f"{letter}: {profile.describe()}",
+                                        font_size=16, wrap=False, padding=2)
+            data = commands.init()
+            data += self._profile_bytes(profile)
+            data += text.encode(profile.encoding, errors="replace") + b"\n"
+            await ble.write(data)
+        await self.initialize()          # back to the active profile (or the defaults)
+        await self.feed(3)
+        return sheet
+
     async def probe_charsets(
         self,
         test_string: str = "Příliš žluťoučký kůň",
@@ -683,11 +820,12 @@ class GoojPrtPT210:
         underline: bool = False,
         size: TextSize = TextSize.NORMAL,
         newline: bool = True,
-        encoding: str = "gb2312",
+        encoding: str | None = None,
     ) -> None:
         """Print text over SPP (shares :func:`commands.build_text_block` with BLE)."""
         self._require_spp().write(commands.build_text_block(
-            text, align, bold, underline, size, newline, encoding,
+            text, align, bold, underline, size, newline,
+            encoding or self._text_encoding or "gb2312",
         ))
 
     def feed_spp(self, lines: int = 3) -> None:

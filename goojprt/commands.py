@@ -62,7 +62,7 @@ def cut() -> bytes:
     return bytes([0x1D, 0x56, 0x41, 0x00])
 
 
-def charset(cp: CodePage) -> bytes:
+def charset(cp: "CodePage | int") -> bytes:
     """``ESC t n`` — select code page for native ESC/POS text output."""
     return bytes([0x1B, 0x74, int(cp)])
 
