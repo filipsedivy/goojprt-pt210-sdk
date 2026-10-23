@@ -283,3 +283,24 @@ async def test_calibration_sheet_has_a_limit():
     p = _printer()
     with pytest.raises(ValueError, match="at most"):
         await p.print_charset_calibration("x", [TextProfile(18, "cp852")] * 27)
+
+
+# ── the charset probe is not spoiled by an applied profile ───────────────────
+
+@pytest.mark.asyncio
+async def test_probe_variants_without_fs_dot_really_lack_it_when_a_profile_is_applied():
+    p = _printer()
+    p.print_text_image = AsyncMock()
+    await p.apply_profile(TextProfile(18, "cp852"))          # sends FS . + ESC t 18
+    p._ble.write.reset_mock()
+    await p.probe_charsets(test_string="abc", pages=[CodePage.PC437])
+
+    writes = _writes(p)
+    select = commands.charset(CodePage.PC437)                # ESC t 0
+    first, second = [i for i, w in enumerate(writes) if w == select]
+    assert writes[first - 1] == commands.init()              # plain ESC @, no profile bytes
+    assert FS_DOT not in writes[:first]                      # nothing cancelled the Chinese mode yet
+    assert writes[second - 1] == FS_DOT                      # only the second variant has it
+    assert writes[-2] == commands.init() + FS_DOT + commands.charset(18)   # profile restored at the end
+    assert writes[-1] == commands.feed(4)
+    assert p.text_encoding == "cp852"

@@ -761,7 +761,8 @@ class GoojPrtPT210:
         ships — compare the native outputs against the always-correct
         bitmap row at the bottom.
 
-        Each page is printed after a fresh ``ESC @``. With
+        Each page is printed after a fresh ``ESC @`` (an applied profile is
+        not sent again until the end). With
         ``try_chinese_mode_off`` (the default) every page is printed twice,
         the second time after ``FS .`` — if only the second variant is
         readable, call :meth:`set_chinese_mode` with ``False`` before
@@ -791,13 +792,15 @@ class GoojPrtPT210:
                     f"-- CodePage.{cp.name} (ESC t {cp.value}){suffix} --",
                     font_size=18, align=Align.LEFT,
                 )
-                await self.initialize()
+                # A raw ESC @, not initialize(): that would send an applied profile's
+                # FS . and ESC t again and spoil the "without FS ." variant.
+                await ble.write(commands.init())
                 if chinese_off:
                     await ble.write(commands.chinese_mode(False))
                 await ble.write(commands.charset(cp))
                 await ble.write(encoded + b"\n")
 
-        await self.initialize()
+        await self.initialize()          # back to the active profile (or the defaults)
         await self.print_text_image(
             "=== Bitmap (always OK) ===\n" + test_string,
             font_size=22, align=Align.CENTER,
