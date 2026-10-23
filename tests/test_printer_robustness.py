@@ -125,8 +125,9 @@ async def test_query_full_info_reports_decoded_flags():
     p._ble.has_notify = True
     p._ble.clear_notify_buffer = MagicMock()
     p._ble.read_gatt = AsyncMock(side_effect=Exception("no gatt"))
-    # Answers in query order: printer, offline cause, error cause, paper sensor.
-    p._ble.read_notify = AsyncMock(side_effect=[b"\x00", b"\x04", b"\x00", b"\x0c", b"", b"", b""])
+    # Answers in query order: printer, offline cause, error cause, paper sensor,
+    # then silence for the seven GS I identification queries.
+    p._ble.read_notify = AsyncMock(side_effect=[b"\x00", b"\x04", b"\x00", b"\x0c"] + [b""] * 7)
 
     info = await p.query_full_info(timeout=0.1)
 

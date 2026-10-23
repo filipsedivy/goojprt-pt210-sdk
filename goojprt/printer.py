@@ -27,6 +27,20 @@ from goojprt.transport import BleTransport, PreviewTransport, SppTransport
 log = logging.getLogger(__name__)
 
 
+def _identity_text(response: bytes) -> str:
+    """Printable text of a ``GS I 65–68`` answer.
+
+    The answers come with a one-character marker in front (``_`` in the Epson
+    manual; ``-`` or none were seen on a PT-210) and NUL padding; both are
+    dropped.
+    """
+    try:
+        text = "".join(ch for ch in response.decode("ascii", errors="ignore") if ch.isprintable()).strip()
+    except Exception:  # noqa: BLE001 — a malformed answer is "no answer", never an error
+        return ""
+    return text[1:] if text[:1] in ("_", "-") else text
+
+
 async def disconnect_quietly(printer) -> None:
     """Disconnect ``printer`` and log a failure instead of raising it.
 
@@ -474,10 +488,17 @@ class GoojPrtPT210:
         )
 
     async def query_printer_info(self, timeout: float = 2.0) -> dict:
-        """Query model / firmware strings via ``GS I 1 / 2 / 3``.
+        """Query identification data via ``GS I``.
 
-        :returns: A dictionary with keys ``model_id``, ``firmware``,
-            ``printer_type`` and ``raw_responses`` — or
+        ``GS I 1 / 2 / 3`` answer with a single *ID byte* each (Epson: model,
+        type, ROM version), not text, so ``model_id``, ``printer_type`` and
+        ``firmware`` are only roughly readable; ``raw_responses`` holds the
+        bytes. ``GS I 65 – 68`` answer with text and fill ``firmware_version``,
+        ``manufacturer``, ``model_name`` and ``serial_number``; keys the
+        printer does not answer are left out. The PT-210 answers all of them.
+
+        :param timeout: Total time budget, shared by all queries.
+        :returns: A dictionary with the keys above and ``raw_responses`` — or
             ``{"error": ...}`` when the printer does not expose a notify
             characteristic.
         """
@@ -493,17 +514,31 @@ class GoojPrtPT210:
             "printer_type": commands.info_request(3),
             "firmware":     commands.info_request(2),
         }
+        identity_queries = {
+            "firmware_version": commands.info_request(65),
+            "manufacturer":     commands.info_request(66),
+            "model_name":       commands.info_request(67),
+            "serial_number":    commands.info_request(68),
+        }
+        per_query = timeout / (len(queries) + len(identity_queries))
 
         raw_responses = []
         for key, cmd in queries.items():
             ble.clear_notify_buffer()
             await ble.write(cmd)
-            response = await ble.read_notify(timeout / len(queries))
+            response = await ble.read_notify(per_query)
             raw_responses.append(list(response))
             try:
                 results[key] = response.decode("ascii", errors="replace").strip("\x00").strip()
             except Exception:
                 results[key] = response.hex()
+
+        for key, cmd in identity_queries.items():
+            ble.clear_notify_buffer()
+            await ble.write(cmd)
+            text = _identity_text(await ble.read_notify(per_query))
+            if text:
+                results[key] = text
 
         results["raw_responses"] = raw_responses
         return results

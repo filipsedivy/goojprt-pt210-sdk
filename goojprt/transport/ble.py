@@ -168,43 +168,59 @@ class BleTransport:
     async def _find_write_characteristic(self) -> Optional[str]:
         """Walk the GATT services and resolve write + notify characteristics.
 
-        Tries the primary UUIDs first, then the alternates. If a notify
-        characteristic is found, subscribes to it so that :meth:`_on_notify`
-        captures any incoming responses. Also records the largest payload
-        the BLE stack reports for write-without-response, so chunks never
-        exceed it.
+        The primary UUID family wins over the alternates (as the constants
+        document), whatever order the services are listed in; a writable
+        characteristic of a known service is the last resort. The notify
+        characteristic is the one that lives in the *same service* as the
+        chosen write characteristic: the PT-210 exposes both families, and
+        its status and identification answers only come back on the notify
+        characteristic that belongs to the write characteristic that was
+        used. Without a match in that service, a primary notify UUID is
+        preferred over an alternate one.
+
+        If a notify characteristic is found, subscribes to it so that
+        :meth:`_on_notify` captures any incoming responses. Also records the
+        largest payload the BLE stack reports for write-without-response,
+        so chunks never exceed it.
 
         :returns: UUID of the write characteristic, or ``None`` when none
             is found.
         """
         assert self._client is not None
-        write_char = None
-        write_obj = None
+        write_uuids = (BLE_WRITE_CHAR_UUID.lower(), BLE_WRITE_CHAR_UUID_ALT.lower())
+        notify_uuids = (BLE_NOTIFY_CHAR_UUID.lower(), BLE_NOTIFY_CHAR_UUID_ALT.lower())
+        service_uuids = (BLE_SERVICE_UUID.lower(), BLE_SERVICE_UUID_ALT.lower())
+
+        best = None                       # (rank, service uuid, characteristic)
+        notify_by_service: dict[str, str] = {}
         for service in self._client.services:
+            service_uuid = service.uuid.lower()
             for char in service.characteristics:
-                if "notify" in char.properties and self._notify_char is None:
-                    if char.uuid.lower() in (
-                        BLE_NOTIFY_CHAR_UUID.lower(),
-                        BLE_NOTIFY_CHAR_UUID_ALT.lower(),
-                    ):
-                        self._notify_char = char.uuid
+                uuid = char.uuid.lower()
+                if "notify" in char.properties and uuid in notify_uuids:
+                    notify_by_service.setdefault(service_uuid, char.uuid)
 
-                if char.uuid.lower() in (
-                    BLE_WRITE_CHAR_UUID.lower(),
-                    BLE_WRITE_CHAR_UUID_ALT.lower(),
-                ):
-                    write_char = char.uuid
-                    write_obj = char
+                if uuid in write_uuids:
+                    rank = write_uuids.index(uuid)                     # primary 0, alternate 1
+                elif (("write-without-response" in char.properties or "write" in char.properties)
+                        and service_uuid in service_uuids):
+                    rank = len(write_uuids)                            # any writable char of a known service
+                else:
                     continue
-                if write_char is None:
-                    if "write-without-response" in char.properties or "write" in char.properties:
-                        if service.uuid.lower() in (
-                            BLE_SERVICE_UUID.lower(),
-                            BLE_SERVICE_UUID_ALT.lower(),
-                        ):
-                            write_char = char.uuid
-                            write_obj = char
+                if best is None or rank < best[0]:
+                    best = (rank, service_uuid, char)
 
+        write_char = write_obj = None
+        notify_char = None
+        if best is not None:
+            _, write_service, write_obj = best
+            write_char = write_obj.uuid
+            notify_char = notify_by_service.get(write_service)
+        if notify_char is None and notify_by_service:
+            candidates = list(notify_by_service.values())
+            notify_char = next((u for u in candidates if u.lower() == notify_uuids[0]), candidates[0])
+
+        self._notify_char = notify_char
         if self._notify_char:
             await self._client.start_notify(self._notify_char, self._on_notify)
 
