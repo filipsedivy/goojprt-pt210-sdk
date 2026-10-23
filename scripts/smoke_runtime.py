@@ -8,8 +8,15 @@ unnoticed there. Run this script in an environment that holds just what
     uv run --isolated --no-dev --frozen python scripts/smoke_runtime.py
 """
 
+import asyncio
+import tempfile
+from pathlib import Path
+
 from goojprt import raster
 from goojprt.rendering import render_ekg, render_grid, render_pdf417, render_text_image
+from goojprt.template import print_template
+
+EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
 RENDERERS = {
     "text": lambda: render_text_image("Příliš žluťoučký kůň"),
@@ -24,4 +31,15 @@ for name, render in RENDERERS.items():
     payload = raster.image_to_raster(render())
     assert payload[:4] == b"\x1d\x76\x30\x00", f"{name}: not a GS v 0 raster"
     print(f"ok  {name:<13} {len(payload):>6} bytes")
+
+# A whole template, rendered through the preview transport: facade, rasteriser,
+# renderers, image fitting and PNG output with nothing but runtime dependencies.
+with tempfile.TemporaryDirectory() as tmp:
+    out = Path(tmp) / "receipt.png"
+    asyncio.run(print_template(
+        None, str(EXAMPLES / "receipt.toml"), {"shop": "Corner Shop", "total": "12.50"},
+        preview=str(out),
+    ))
+    assert out.read_bytes().startswith(b"\x89PNG"), "template preview is not a PNG"
+    print(f"ok  template preview {out.stat().st_size:>6} bytes")
 print("runtime dependencies are sufficient")
