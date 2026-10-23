@@ -38,10 +38,24 @@ async def _ttl_sweep(qs: QueueState, ttl_s: float) -> None:
         await asyncio.sleep(60)
 
 
+def _printer_busy(app_state) -> bool:
+    """Whether a job is running or waiting, i.e. the printer is (about to be) in use."""
+    qs = getattr(app_state, "queue_state", None)
+    if qs is None:
+        return False
+    return qs.queue.qsize() > 0 or _find_running_job(qs.registry) is not None
+
+
 async def _health_refresh(app_state, printer) -> None:
+    """Refresh the cached battery/paper status every 30 s.
+
+    Status queries are skipped while a job is queued or running: they would
+    only compete with the job for the BLE link and add status bytes to a
+    stream the printer is busy parsing.
+    """
     while True:
         try:
-            if printer.is_connected_ble:
+            if printer.is_connected_ble and not _printer_busy(app_state):
                 info = await printer.query_full_info(timeout=1.0)
                 cache = {}
                 lvl = info.get("ble_battery", {}).get("level_pct")

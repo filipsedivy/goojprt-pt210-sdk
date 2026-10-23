@@ -38,6 +38,26 @@ _SIZE = {
 }
 
 
+def _prepare_image(p: dict):
+    """Decode the uploaded image and run the 1-bit pipeline (CPU-bound)."""
+    from PIL import Image as PILImage
+    from goojprt.rendering.image_print import prepare_image
+
+    raw = base64.b64decode(p["image_b64"])
+    src = PILImage.open(io.BytesIO(raw))
+    return prepare_image(
+        src,
+        rotate=p.get("rotate", 0),
+        crop=tuple(p["crop"]) if p.get("crop") else None,
+        brightness=p.get("brightness", 1.0),
+        contrast=p.get("contrast", 1.0),
+        threshold=p.get("threshold", 128),
+        dither=p.get("dither", True),
+        scale=p.get("scale", 1.0),
+        align=p.get("align", "center"),
+    )
+
+
 async def dispatch(printer, job: Job) -> None:
     """Translate a job's payload into SDK calls. No business logic."""
     p = job.payload
@@ -85,22 +105,7 @@ async def dispatch(printer, job: Job) -> None:
         await printer.feed(lines=p.get("lines", 3))
 
     elif job.type == "image":
-        from PIL import Image as PILImage
-        from goojprt.rendering.image_print import prepare_image
-
-        raw = base64.b64decode(p["image_b64"])
-        src = PILImage.open(io.BytesIO(raw))
-        prepared = prepare_image(
-            src,
-            rotate=p.get("rotate", 0),
-            crop=tuple(p["crop"]) if p.get("crop") else None,
-            brightness=p.get("brightness", 1.0),
-            contrast=p.get("contrast", 1.0),
-            threshold=p.get("threshold", 128),
-            dither=p.get("dither", True),
-            scale=p.get("scale", 1.0),
-            align=p.get("align", "center"),
-        )
+        prepared = await asyncio.to_thread(_prepare_image, p)
         await printer.print_image(prepared)
         if p.get("feed_after", 0) > 0:
             await printer.feed(lines=p["feed_after"])
