@@ -17,13 +17,14 @@ import secrets
 import tomllib
 from pathlib import Path
 
+from goojprt import commands
 from goojprt.enums import Align, CodePage, TextSize
 from goojprt.printer import GoojPrtPT210
 
 #: Item ``type`` values understood by :func:`print_template`.
 ITEM_TYPES = frozenset({
     "text_image", "text", "pdf417", "qr", "line", "feed", "cut", "grid", "ekg",
-    "charset", "chinese_mode", "image",
+    "charset", "chinese_mode", "image", "density",
 })
 
 
@@ -153,6 +154,26 @@ def _prepare_image_item(index: int, item: dict, base_dir: Path):
         raise TemplateError(f"item {index + 1} (image): {exc}") from exc
 
 
+def _density_of(item: dict) -> "str | int":
+    """The ``level`` / ``heating`` setting of a ``density`` item."""
+    return item.get("level", item.get("heating", "normal"))
+
+
+def _validate_density_items(items: list[dict]) -> None:
+    """Reject bad ``density`` items before the printer is touched."""
+    for i, item in enumerate(items):
+        if item.get("type") != "density":
+            continue
+        try:
+            commands.energy(
+                dots=item.get("dots", 7),
+                heating=commands.resolve_density(_density_of(item)),
+                interval=item.get("interval", 2),
+            )
+        except (ValueError, TypeError) as exc:
+            raise TemplateError(f"item {i + 1} (density): {exc}") from exc
+
+
 async def _prepare_images(items: list[dict], base_dir: Path) -> dict[int, object]:
     """Prepare every ``image`` item up front, keyed by item index.
 
@@ -169,6 +190,8 @@ async def print_template(
     address: str,
     path: str,
     extra_vars: dict[str, str] | None = None,
+    *,
+    density: "str | int | None" = None,
 ) -> None:
     """Load a TOML template, substitute variables, connect via BLE and print.
 
@@ -176,7 +199,8 @@ async def print_template(
     code page by :class:`~goojprt.enums.CodePage` name (``code_page =
     "PC852"``) and ``chinese_mode`` toggles the double-byte mode
     (``enabled = false``); both affect the native ``text`` items that
-    follow. Unknown types print a warning on stdout and are skipped.
+    follow. ``density`` sets the print darkness (``level`` = ``light`` /
+    ``normal`` / ``dark``, or ``heating`` = 0–255). Unknown types print a warning on stdout and are skipped.
 
     An ``image`` item prints a picture (``path`` is relative to the template
     file; ``fit``, ``scale``, ``align``, ``dither``, ``threshold``,
@@ -187,7 +211,12 @@ async def print_template(
     :param address: Bluetooth address / UUID of the printer.
     :param path: Filesystem path to a ``.toml`` template.
     :param extra_vars: Additional variables (e.g. ``--var name=Filip``).
-    :raises TemplateError: When an ``image`` item cannot be prepared.
+    :param density: Print darkness applied right after the printer is
+        initialised (see :meth:`~goojprt.printer.GoojPrtPT210.set_density`);
+        a ``density`` item (``level = "dark"`` or ``heating = 120``) in the
+        template overrides it from that point on.
+    :raises TemplateError: When an ``image`` or ``density`` item, or
+        ``density``, is invalid.
     """
     with open(path, "rb") as f:
         tmpl = tomllib.load(f)
@@ -208,6 +237,12 @@ async def print_template(
     }
 
     items = [substitute_deep(item, variables) for item in items]
+    if density is not None:
+        try:
+            commands.resolve_density(density)
+        except ValueError as exc:
+            raise TemplateError(f"density: {exc}") from exc
+    _validate_density_items(items)
     images = await _prepare_images(items, Path(path).resolve().parent)
 
     printer = GoojPrtPT210()
@@ -215,6 +250,8 @@ async def print_template(
     await printer.connect_ble(address)
     print(f"Connected. Printing template: {path}\n")
     await printer.initialize()
+    if density is not None:
+        await printer.set_density(density)
 
     for i, item in enumerate(items):
         kind = item.get("type", "")
@@ -287,6 +324,12 @@ async def print_template(
                 print(f"    ! Unknown code page '{name}' (known: {known}), skipping.")
                 continue
             await printer.set_charset(code_page)
+        elif kind == "density":
+            await printer.set_density(
+                _density_of(item),
+                dots=item.get("dots", 7),
+                interval=item.get("interval", 2),
+            )
         elif kind == "chinese_mode":
             await printer.set_chinese_mode(bool(item.get("enabled", False)))
         elif kind == "ekg":

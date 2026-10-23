@@ -96,17 +96,48 @@ def info_request(n: int) -> bytes:
     return bytes([0x1D, 0x49, n])
 
 
+#: Named heating times for :func:`resolve_density` / ``set_density``.
+#: Uncalibrated starting points around the documented factory default of
+#: ≈ 80, not measured values — tune them on your unit and paper.
+DENSITY_PRESETS: dict[str, int] = {"light": 60, "normal": 80, "dark": 120}
+
+
+def resolve_density(level: "str | int") -> int:
+    """Turn a density preset name or a raw heating time into a heating time.
+
+    :param level: ``"light"``, ``"normal"``, ``"dark"`` (see
+        :data:`DENSITY_PRESETS`) or an integer 0–255.
+    :raises ValueError: For an unknown name or an out-of-range number.
+    """
+    if isinstance(level, bool):
+        raise ValueError(f"invalid density {level!r}")
+    if isinstance(level, int):
+        if not 0 <= level <= 255:
+            raise ValueError(f"density {level} is outside 0-255")
+        return level
+    if isinstance(level, str) and level.lower() in DENSITY_PRESETS:
+        return DENSITY_PRESETS[level.lower()]
+    raise ValueError(
+        f"unknown density {level!r}; use {', '.join(DENSITY_PRESETS)} or a number 0-255"
+    )
+
+
 def energy(dots: int = 7, heating: int = 120, interval: int = 2) -> bytes:
     """``ESC 7 n1 n2 n3`` — configure thermal head heating parameters.
 
-    :param dots: Maximum number of simultaneously heated dots, 0–7.
+    :param dots: Maximum number of simultaneously heated dots (``n1``).
         Higher values print faster but draw more current.
-    :param heating: Heating time, 0–255. Higher values produce darker
+    :param heating: Heating time (``n2``). Higher values produce darker
         output (the factory default is ≈ 80).
-    :param interval: Heating interval, 0–255. Lower values print faster
+    :param interval: Heating interval (``n3``). Lower values print faster
         (the factory default is ≈ 2).
+    :raises ValueError: When a parameter is outside 0–255 (it used to wrap
+        around silently).
     """
-    return bytes([0x1B, 0x37, dots & 0xFF, heating & 0xFF, interval & 0xFF])
+    for name, value in (("dots", dots), ("heating", heating), ("interval", interval)):
+        if not 0 <= value <= 255:
+            raise ValueError(f"{name} must be within 0-255, got {value}")
+    return bytes([0x1B, 0x37, dots, heating, interval])
 
 
 def font(font_b: bool = False) -> bytes:

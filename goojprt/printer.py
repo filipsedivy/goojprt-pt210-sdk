@@ -345,6 +345,33 @@ class GoojPrtPT210:
         """
         await self._require_ble().write(commands.chinese_mode(enabled))
 
+    async def set_density(
+        self,
+        level: "str | int" = "normal",
+        *,
+        dots: int = 7,
+        interval: int = 2,
+    ) -> None:
+        """Set the print darkness (``ESC 7``): heating time, dots and interval.
+
+        :param level: ``"light"``, ``"normal"`` or ``"dark"``, or a heating
+            time 0–255 (see :data:`goojprt.commands.DENSITY_PRESETS`; the
+            presets are uncalibrated starting points). Darker output costs
+            battery and speed.
+        :param dots: Maximum simultaneously heated dots, 0–255.
+        :param interval: Heating interval, 0–255.
+        :raises ValueError: For an unknown preset or an out-of-range value;
+            nothing is sent in that case.
+
+        ``ESC @`` (:meth:`initialize`) resets the heating parameters, so call
+        this afterwards. Whether a given unit honours ``ESC 7`` is not
+        verified.
+        """
+        heating = commands.resolve_density(level)
+        await self._require_ble().write(
+            commands.energy(dots=dots, heating=heating, interval=interval)
+        )
+
     async def query_printer_info(self, timeout: float = 2.0) -> dict:
         """Query model / firmware strings via ``GS I 1 / 2 / 3``.
 
