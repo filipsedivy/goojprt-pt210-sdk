@@ -59,10 +59,14 @@ def _prepare_image(p: dict):
     )
 
 
-async def dispatch(printer, job: Job) -> None:
-    """Translate a job's payload into SDK calls. No business logic."""
-    p = job.payload
-    if job.type == "text":
+async def dispatch_payload(printer, job_type: str, payload: dict) -> None:
+    """Translate a job type and payload into SDK calls. No business logic.
+
+    Shared by the worker (real printer) and the preview endpoints (preview
+    transport), so a preview shows exactly what a print would produce.
+    """
+    p = payload
+    if job_type == "text":
         if p.get("bitmap"):
             await printer.print_text_image(
                 text=p["text"],
@@ -81,7 +85,7 @@ async def dispatch(printer, job: Job) -> None:
         if p.get("feed_after", 0) > 0:
             await printer.feed(lines=p["feed_after"])
 
-    elif job.type == "qr":
+    elif job_type == "qr":
         await printer.print_qr(
             data=p["data"],
             size=p.get("size", 6),
@@ -91,7 +95,7 @@ async def dispatch(printer, job: Job) -> None:
         if p.get("feed_after", 0) > 0:
             await printer.feed(lines=p["feed_after"])
 
-    elif job.type == "pdf417":
+    elif job_type == "pdf417":
         await printer.print_pdf417(
             data=p["data"],
             align=_ALIGN[p.get("align", "center")],
@@ -102,16 +106,16 @@ async def dispatch(printer, job: Job) -> None:
         if p.get("feed_after", 0) > 0:
             await printer.feed(lines=p["feed_after"])
 
-    elif job.type == "feed":
+    elif job_type == "feed":
         await printer.feed(lines=p.get("lines", 3))
 
-    elif job.type == "image":
+    elif job_type == "image":
         prepared = await asyncio.to_thread(_prepare_image, p)
         await printer.print_image(prepared)
         if p.get("feed_after", 0) > 0:
             await printer.feed(lines=p["feed_after"])
 
-    elif job.type == "ekg":
+    elif job_type == "ekg":
         await printer.print_ekg(
             beats=p.get("beats", 4),
             height_px=p.get("height_px", 160),
@@ -122,7 +126,7 @@ async def dispatch(printer, job: Job) -> None:
             px_per_beat=p.get("px_per_beat", 240),
         )
 
-    elif job.type == "grid":
+    elif job_type == "grid":
         await printer.print_grid(
             columns=p["columns"],
             font_size=p.get("font_size", 22),
@@ -130,7 +134,12 @@ async def dispatch(printer, job: Job) -> None:
         )
 
     else:
-        raise ValueError(f"unknown job type: {job.type}")
+        raise ValueError(f"unknown job type: {job_type}")
+
+
+async def dispatch(printer, job: Job) -> None:
+    """Run one queued job on ``printer``."""
+    await dispatch_payload(printer, job.type, job.payload)
 
 
 async def run_worker(

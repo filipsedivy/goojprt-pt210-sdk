@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager, contextmanager
 from goojprt import commands, raster, rendering, status
 from goojprt.constants import PAPER_WIDTH_PX
 from goojprt.enums import Align, CodePage, TextSize
-from goojprt.transport import BleTransport, SppTransport
+from goojprt.transport import BleTransport, PreviewTransport, SppTransport
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class GoojPrtPT210:
 
     def __init__(self) -> None:
         """Create an empty driver. Transports are attached on first connect."""
-        self._ble: BleTransport | None = None
+        self._ble: BleTransport | PreviewTransport | None = None
         self._spp: SppTransport | None = None
 
     @classmethod
@@ -169,7 +169,7 @@ class GoojPrtPT210:
             self._ble = BleTransport(on_disconnect=on_disconnect, **kwargs)
         await self._ble.connect(address)
 
-    def _require_ble(self) -> BleTransport:
+    def _require_ble(self) -> BleTransport | PreviewTransport:
         """Return the BLE transport or explain how to get one."""
         if self._ble is None:
             raise RuntimeError("Not connected over BLE; call connect_ble() first.")
@@ -180,6 +180,23 @@ class GoojPrtPT210:
         if self._spp is None:
             raise RuntimeError("Not connected over SPP; call connect_spp() first.")
         return self._spp
+
+    def connect_preview(self) -> PreviewTransport:
+        """Attach a :class:`~goojprt.transport.preview.PreviewTransport` instead of a printer.
+
+        Every BLE-style method (``print_text_image``, ``print_image``,
+        ``print_pdf417``, templates, …) then renders into memory instead of
+        printing; read the result from the returned transport::
+
+            preview = printer.connect_preview()
+            await printer.print_text_image("Hello")
+            preview.save("preview.png")
+
+        Native ESC/POS text and QR codes appear only as dashed notes.
+        """
+        transport = PreviewTransport()
+        self._ble = transport
+        return transport
 
     async def disconnect(self) -> None:
         """Disconnect the BLE client (see :meth:`BleTransport.disconnect`)."""

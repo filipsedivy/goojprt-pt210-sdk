@@ -187,11 +187,12 @@ async def _prepare_images(items: list[dict], base_dir: Path) -> dict[int, object
 
 
 async def print_template(
-    address: str,
+    address: str | None,
     path: str,
     extra_vars: dict[str, str] | None = None,
     *,
     density: "str | int | None" = None,
+    preview: "str | None" = None,
 ) -> None:
     """Load a TOML template, substitute variables, connect via BLE and print.
 
@@ -208,16 +209,23 @@ async def print_template(
     :func:`~goojprt.rendering.image_print.prepare_image`). Pictures are
     opened before the printer is touched.
 
-    :param address: Bluetooth address / UUID of the printer.
+    :param address: Bluetooth address / UUID of the printer; not needed (and
+        not used) with ``preview``.
     :param path: Filesystem path to a ``.toml`` template.
     :param extra_vars: Additional variables (e.g. ``--var name=Filip``).
     :param density: Print darkness applied right after the printer is
         initialised (see :meth:`~goojprt.printer.GoojPrtPT210.set_density`);
         a ``density`` item (``level = "dark"`` or ``heating = 120``) in the
         template overrides it from that point on.
+    :param preview: Render into this PNG file instead of printing — no
+        printer is needed. Bitmap items are drawn as they would print;
+        native ``text`` and ``qr`` items appear as dashed notes only.
     :raises TemplateError: When an ``image`` or ``density`` item, or
         ``density``, is invalid.
+    :raises ValueError: When neither ``address`` nor ``preview`` is given.
     """
+    if address is None and preview is None:
+        raise ValueError("print_template needs an address, or preview= to render without a printer")
     with open(path, "rb") as f:
         tmpl = tomllib.load(f)
 
@@ -246,9 +254,14 @@ async def print_template(
     images = await _prepare_images(items, Path(path).resolve().parent)
 
     printer = GoojPrtPT210()
-    print(f"Connecting to {address} ...")
-    await printer.connect_ble(address)
-    print(f"Connected. Printing template: {path}\n")
+    transport = None
+    if preview is None:
+        print(f"Connecting to {address} ...")
+        await printer.connect_ble(address)
+        print(f"Connected. Printing template: {path}\n")
+    else:
+        transport = printer.connect_preview()
+        print(f"Rendering template {path} into {preview} ...\n")
     try:
         await printer.initialize()
         if density is not None:
@@ -346,6 +359,10 @@ async def print_template(
                 )
             else:
                 print(f"    ! Unknown item type: '{kind}', skipping.")
+        if transport is not None and preview is not None:
+            transport.save(preview)
+            print(f"\nPreview saved to {preview}: {transport.summary()}")
     finally:
         await disconnect_quietly(printer)
-    print("\nDone, disconnected.")
+    if transport is None:
+        print("\nDone, disconnected.")

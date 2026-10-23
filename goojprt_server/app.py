@@ -27,6 +27,7 @@ from goojprt_server.queue import QueueState
 from goojprt_server.routes import api as api_routes
 from goojprt_server.routes import gui as gui_routes
 from goojprt_server.routes import health as health_routes
+from goojprt_server.routes import preview as preview_routes
 
 _PKG_ROOT = Path(__file__).parent
 _TEMPLATES = Jinja2Templates(directory=str(_PKG_ROOT / "templates"))
@@ -74,6 +75,7 @@ def create_app(
 
     app.include_router(api_routes.router)
     app.include_router(health_routes.router)
+    app.include_router(preview_routes.router)
     app.include_router(gui_routes.router)
     app.mount("/static", StaticFiles(directory=str(_PKG_ROOT / "static")), name="static")
     # Make templates available to gui routes.
