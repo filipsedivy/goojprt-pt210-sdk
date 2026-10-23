@@ -11,9 +11,12 @@ activated.
 * :class:`BleTransport` — asynchronous BLE transport; implements MTU
   chunking, pacing between chunks, and post-raster throttling.
 * :class:`SppTransport` — thin RFCOMM socket wrapper; Linux only.
+* :class:`PreviewTransport` — records the job and renders it to an image
+  instead of printing (no printer needed).
 """
 
 from goojprt.transport.ble import BLEAK_AVAILABLE, BleTransport
+from goojprt.transport.preview import PreviewTransport
 from goojprt.transport.spp import SppTransport
 
-__all__ = ["BleTransport", "SppTransport", "BLEAK_AVAILABLE"]
+__all__ = ["BleTransport", "SppTransport", "PreviewTransport", "BLEAK_AVAILABLE"]

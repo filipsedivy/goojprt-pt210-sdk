@@ -30,20 +30,56 @@ def _normalize_to_paper_width(img):
     return img
 
 
+#: Byte → bit-inverted byte lookup, used with :meth:`bytes.translate`.
+_INVERT_BITS = bytes(range(255, -1, -1))
+
+
 def _pack_bits(band) -> bytes:
     """Convert a 1-bit PIL image band to packed ESC/POS pixel bytes.
 
     PIL mode ``"1"``: ``False``/``0`` = black, ``True``/``1`` = white.
     ESC/POS: ``1`` bit = black, ``0`` bit = white, MSB = leftmost pixel.
 
+    PIL already packs mode ``"1"`` rows MSB-first, so the only work left is
+    inverting the polarity. Rows whose width is not a multiple of 8 are
+    padded with white first so the padding bits never print.
+
     :param band: PIL image in mode ``"1"``.
     :returns: Packed bytes, one bit per pixel, MSB first.
     """
-    import numpy as np
+    if band.width % 8:
+        from PIL import Image as PILImage
 
-    arr = np.asarray(band, dtype=np.uint8)
-    bits = (arr == 0).astype(np.uint8)
-    return np.packbits(bits, axis=1).tobytes()
+        padded = PILImage.new("1", (band.width + 8 - band.width % 8, band.height), 1)
+        padded.paste(band, (0, 0))
+        band = padded
+    return band.tobytes().translate(_INVERT_BITS)
+
+
+def raster_to_image(payload: bytes):
+    """Decode a ``GS v 0`` payload back into a PIL image (the inverse of packing).
+
+    Used by the preview transport; also handy in tests. Only normal-mode
+    payloads as built by :func:`image_to_raster` and
+    :func:`image_to_raster_strips` are understood. Bytes after the pixel
+    data are ignored.
+
+    :param payload: A ``GS v 0`` command including its 8-byte header.
+    :returns: PIL image in mode ``"1"``, ``width_bytes * 8`` pixels wide.
+    :raises ValueError: When the header is not ``GS v 0 0`` or the pixel
+        data is shorter than the header announces.
+    """
+    from PIL import Image as PILImage
+
+    if len(payload) < 8 or payload[:4] != b"\x1d\x76\x30\x00":
+        raise ValueError("not a GS v 0 raster payload (normal mode)")
+    width_bytes = payload[4] | (payload[5] << 8)
+    rows = payload[6] | (payload[7] << 8)
+    expected = width_bytes * rows
+    pixels = payload[8:8 + expected]
+    if len(pixels) != expected:
+        raise ValueError(f"truncated raster: header announces {expected} bytes, got {len(pixels)}")
+    return PILImage.frombytes("1", (width_bytes * 8, rows), pixels.translate(_INVERT_BITS))
 
 
 def image_to_raster(image) -> bytes:

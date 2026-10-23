@@ -1,8 +1,28 @@
 # goojprt/rendering/image_print.py
 """Pure image preparation pipeline for thermal printing."""
 
+from typing import Literal
+
 from goojprt.constants import PAPER_WIDTH_PX
 from goojprt.enums import Align
+
+#: How :func:`prepare_image` relates the output width to the paper width.
+FitMode = Literal["none", "shrink", "width"]
+
+FIT_MODES: tuple[str, ...] = ("none", "shrink", "width")
+
+
+def _target_width(source_width: int, scale: float, fit: str) -> int:
+    """Width in pixels the prepared image should have (before padding)."""
+    if fit == "none":
+        width = int(scale * source_width)
+    elif fit == "shrink":
+        width = min(int(scale * source_width), PAPER_WIDTH_PX)
+    elif fit == "width":
+        width = min(int(scale * PAPER_WIDTH_PX), PAPER_WIDTH_PX)
+    else:
+        raise ValueError(f"unknown fit mode {fit!r}; expected one of {', '.join(FIT_MODES)}")
+    return max(1, width)
 
 
 def prepare_image(
@@ -11,6 +31,7 @@ def prepare_image(
     rotate: int = 0,
     crop: tuple[float, float, float, float] | None = None,
     scale: float = 1.0,
+    fit: FitMode = "shrink",
     brightness: float = 1.0,
     contrast: float = 1.0,
     threshold: int = 128,
@@ -23,6 +44,19 @@ def prepare_image(
 
     Pipeline: rotate → crop → resize → brightness → contrast →
     grayscale → threshold/dither → pad to paper width.
+
+    ``fit`` and ``scale`` decide the width of the resized image:
+
+    * ``"shrink"`` (default) — ``scale`` multiplies the source width, but the
+      result is never wider than the paper, so a large photo is scaled down
+      instead of having its right part cut off. Anything that already fits
+      comes out exactly as with ``"none"``.
+    * ``"width"`` — ``scale`` is a fraction of the paper width: ``1.0`` fills
+      the paper whatever the source size (small sources are enlarged).
+    * ``"none"`` — ``scale`` multiplies the source width and nothing else;
+      anything wider than the paper is cropped when printed.
+
+    :raises ValueError: For an unknown ``fit`` mode.
     """
     from PIL import Image, ImageEnhance
 
@@ -45,7 +79,7 @@ def prepare_image(
         img = img.crop((left, upper, right, lower))
 
     w, h = img.size
-    target_w = max(1, int(scale * w))
+    target_w = _target_width(w, scale, fit)
     target_h = max(1, int(h * target_w / w))
     img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
 

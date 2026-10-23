@@ -21,11 +21,29 @@ def test_cp1250_latin_chars():
     assert len(result) > 0
 
 
-def test_fallback_on_unicode_error():
-    # Characters not in ASCII fall back to UTF-8
-    result = text_to_bytes("café", "ascii")
-    assert isinstance(result, bytes)
-    assert len(result) > 0
+def test_unencodable_chars_are_replaced_not_utf8_encoded():
+    # Only the unencodable character is lost; the rest keeps the requested codec.
+    assert text_to_bytes("café", "ascii") == b"caf?"
+
+
+def test_unencodable_char_does_not_switch_whole_string_to_utf8():
+    # "ř" is not in GB2312, "í" is. UTF-8 bytes would be read as GBK garbage.
+    result = text_to_bytes("Příliš", "gb2312")
+    assert result == "Příliš".encode("gb2312", errors="replace")
+    assert b"\xc3" not in result and b"\xc5" not in result
+
+
+def test_unencodable_char_logs_char_but_not_the_text(caplog):
+    import logging
+    with caplog.at_level(logging.WARNING, logger="goojprt.encoding"):
+        text_to_bytes("secret-ř-password", "ascii")
+    assert "ř" in caplog.text
+    assert "secret" not in caplog.text
+
+
+def test_wpc1250_std_maps_to_cp1250():
+    assert CODEPAGE_TO_ENCODING[CodePage.WPC1250_STD] == "cp1250"
+    assert int(CodePage.WPC1250_STD) == 45
 
 
 def test_fallback_on_unknown_codec():

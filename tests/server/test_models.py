@@ -16,7 +16,7 @@ def test_text_defaults():
     assert r.size == "normal"
     assert r.bitmap is False
     assert r.font_size == 24
-    assert r.encoding == "gb2312"
+    assert r.encoding is None        # None = the active profile's codec, GB2312 without one
     assert r.feed_after == 0
 
 

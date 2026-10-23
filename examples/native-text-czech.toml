@@ -1,0 +1,37 @@
+# Native (non-bitmap) Czech text: fast, tiny on the wire, uses the printer's own font.
+#
+# Which ESC t table prints Czech correctly differs between printers, so find
+# yours once:
+#
+#   goojprt <address> --calibrate          # prints a sheet, asks which line is right
+#   goojprt <address> --template examples/native-text-czech.toml
+#
+# `--calibrate` stores the answer and templates pick it up on their own; the
+# `codepage` item below states the same thing explicitly (and overrides it).
+
+# ESC t 18 (PC852 / cp852), after FS . so bytes >= 0x80 are single characters.
+# `code_page` takes a goojprt.CodePage name or a table number; optional keys:
+# `encoding` (default: the codec of that table) and `chinese_mode_off` (default true).
+[[items]]
+type = "codepage"
+code_page = "PC852"
+
+[[items]]
+type = "text"
+text = "Příliš žluťoučký kůň úpěl ďábelské ódy"
+
+[[items]]
+type = "text"
+text = "ĚŠČŘŽÝÁÍÉ ěščřžýáíé ůúďťň"
+bold = true
+
+# `auto` prints natively when the table can show the line and as a bitmap when
+# it cannot: the euro sign is not in CP852, so this one line is rendered.
+[[items]]
+type = "text"
+text = "Cena: 5 € za kus"
+auto = true
+
+[[items]]
+type = "feed"
+lines = 3

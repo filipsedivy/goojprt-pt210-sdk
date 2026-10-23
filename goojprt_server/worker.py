@@ -38,11 +38,45 @@ _SIZE = {
 }
 
 
-async def dispatch(printer, job: Job) -> None:
-    """Translate a job's payload into SDK calls. No business logic."""
-    p = job.payload
-    if job.type == "text":
-        if p.get("bitmap"):
+def _prepare_image(p: dict):
+    """Decode the uploaded image and run the 1-bit pipeline (CPU-bound)."""
+    from PIL import Image as PILImage
+    from goojprt.rendering.image_print import prepare_image
+
+    raw = base64.b64decode(p["image_b64"])
+    src = PILImage.open(io.BytesIO(raw))
+    return prepare_image(
+        src,
+        rotate=p.get("rotate", 0),
+        crop=tuple(p["crop"]) if p.get("crop") else None,
+        brightness=p.get("brightness", 1.0),
+        contrast=p.get("contrast", 1.0),
+        threshold=p.get("threshold", 128),
+        dither=p.get("dither", True),
+        scale=p.get("scale", 1.0),
+        fit=p.get("fit", "shrink"),
+        align=p.get("align", "center"),
+    )
+
+
+async def dispatch_payload(printer, job_type: str, payload: dict) -> None:
+    """Translate a job type and payload into SDK calls. No business logic.
+
+    Shared by the worker (real printer) and the preview endpoints (preview
+    transport), so a preview shows exactly what a print would produce.
+    """
+    p = payload
+    if job_type == "text":
+        if p.get("auto") and not p.get("bitmap"):
+            await printer.print_text_auto(
+                text=p["text"],
+                align=_ALIGN[p.get("align", "left")],
+                bold=p.get("bold", False),
+                underline=p.get("underline", False),
+                size=_SIZE[p.get("size", "normal")],
+                font_size=p.get("font_size", 24),
+            )
+        elif p.get("bitmap"):
             await printer.print_text_image(
                 text=p["text"],
                 font_size=p.get("font_size", 24),
@@ -55,12 +89,12 @@ async def dispatch(printer, job: Job) -> None:
                 bold=p.get("bold", False),
                 underline=p.get("underline", False),
                 size=_SIZE[p.get("size", "normal")],
-                encoding=p.get("encoding", "gb2312"),
+                encoding=p.get("encoding"),
             )
         if p.get("feed_after", 0) > 0:
             await printer.feed(lines=p["feed_after"])
 
-    elif job.type == "qr":
+    elif job_type == "qr":
         await printer.print_qr(
             data=p["data"],
             size=p.get("size", 6),
@@ -70,7 +104,7 @@ async def dispatch(printer, job: Job) -> None:
         if p.get("feed_after", 0) > 0:
             await printer.feed(lines=p["feed_after"])
 
-    elif job.type == "pdf417":
+    elif job_type == "pdf417":
         await printer.print_pdf417(
             data=p["data"],
             align=_ALIGN[p.get("align", "center")],
@@ -81,31 +115,16 @@ async def dispatch(printer, job: Job) -> None:
         if p.get("feed_after", 0) > 0:
             await printer.feed(lines=p["feed_after"])
 
-    elif job.type == "feed":
+    elif job_type == "feed":
         await printer.feed(lines=p.get("lines", 3))
 
-    elif job.type == "image":
-        from PIL import Image as PILImage
-        from goojprt.rendering.image_print import prepare_image
-
-        raw = base64.b64decode(p["image_b64"])
-        src = PILImage.open(io.BytesIO(raw))
-        prepared = prepare_image(
-            src,
-            rotate=p.get("rotate", 0),
-            crop=tuple(p["crop"]) if p.get("crop") else None,
-            brightness=p.get("brightness", 1.0),
-            contrast=p.get("contrast", 1.0),
-            threshold=p.get("threshold", 128),
-            dither=p.get("dither", True),
-            scale=p.get("scale", 1.0),
-            align=p.get("align", "center"),
-        )
+    elif job_type == "image":
+        prepared = await asyncio.to_thread(_prepare_image, p)
         await printer.print_image(prepared)
         if p.get("feed_after", 0) > 0:
             await printer.feed(lines=p["feed_after"])
 
-    elif job.type == "ekg":
+    elif job_type == "ekg":
         await printer.print_ekg(
             beats=p.get("beats", 4),
             height_px=p.get("height_px", 160),
@@ -116,7 +135,7 @@ async def dispatch(printer, job: Job) -> None:
             px_per_beat=p.get("px_per_beat", 240),
         )
 
-    elif job.type == "grid":
+    elif job_type == "grid":
         await printer.print_grid(
             columns=p["columns"],
             font_size=p.get("font_size", 22),
@@ -124,7 +143,12 @@ async def dispatch(printer, job: Job) -> None:
         )
 
     else:
-        raise ValueError(f"unknown job type: {job.type}")
+        raise ValueError(f"unknown job type: {job_type}")
+
+
+async def dispatch(printer, job: Job) -> None:
+    """Run one queued job on ``printer``."""
+    await dispatch_payload(printer, job.type, job.payload)
 
 
 async def run_worker(

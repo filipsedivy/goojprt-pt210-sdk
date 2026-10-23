@@ -20,7 +20,7 @@ class SppTransport:
         """Create a disconnected transport; call :meth:`connect` to attach."""
         self._sock: Optional[socket.socket] = None
 
-    CHUNK_SIZE_RASTER = 192  # multiple of 48 (one raster row = 48 bytes)
+    CHUNK_SIZE_RASTER = 192  # same as BleTransport
     CHUNK_DELAY = 0.04       # seconds between chunks, same as BleTransport
 
     def connect(self, address: str, port: int = 1) -> None:
@@ -63,11 +63,14 @@ class SppTransport:
         self._sock.sendall(data)
 
     def write_raster_strip(self, data: bytes, rows: int = 24) -> None:
-        """Send one raster strip using row-aligned 192-byte chunks.
+        """Send one raster strip in 192-byte chunks.
 
         Mirrors :meth:`~goojprt.transport.ble.BleTransport.write_raster_strip`
-        but synchronous. Chunk boundaries are aligned to 48 bytes (one raster
-        row) to prevent pixel-shift artifacts on cheap printer firmware.
+        but synchronous. Chunks are counted from the start of the payload
+        (header included); the printer parses a byte stream, so they need
+        not coincide with raster rows. Every chunk goes out with
+        :meth:`socket.socket.sendall`, because plain ``send`` may accept
+        fewer bytes than offered and silently shift the image.
         After all chunks are sent, sleeps ``max(0.05, rows * 0.002)`` seconds
         so the paper motor can advance before the next strip is issued.
 
@@ -81,6 +84,6 @@ class SppTransport:
         assert self._sock is not None
         for i in range(0, len(data), self.CHUNK_SIZE_RASTER):
             chunk = data[i : i + self.CHUNK_SIZE_RASTER]
-            self._sock.send(chunk)
+            self._sock.sendall(chunk)
             time.sleep(self.CHUNK_DELAY)
         time.sleep(max(0.05, rows * 0.002))

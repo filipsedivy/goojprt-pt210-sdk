@@ -13,10 +13,13 @@ Exports:
       :data:`~goojprt.constants.FONT_CANDIDATES`.
 """
 
+import logging
 from pathlib import Path
 
 from goojprt.constants import FONT_CANDIDATES
 from goojprt.enums import CodePage
+
+log = logging.getLogger(__name__)
 
 
 #: ESC/POS code page → Python codec name (as accepted by ``str.encode``).
@@ -25,6 +28,11 @@ CODEPAGE_TO_ENCODING: dict[int, str] = {
     CodePage.PC850:   "cp850",
     CodePage.PC852:   "cp852",
     CodePage.WPC1250: "cp1250",
+    CodePage.WPC1250_STD: "cp1250",
+    CodePage.CP775:       "cp775",
+    CodePage.ISO8859_2:   "iso8859_2",
+    CodePage.ISO8859_15:  "iso8859_15",
+    CodePage.WPC1251:     "cp1251",
     CodePage.PC866:   "cp866",
     CodePage.PC858:   "cp858",
 }
@@ -34,10 +42,18 @@ def text_to_bytes(text: str, encoding: str = "gb2312") -> bytes:
     """Encode ``text`` into bytes suitable for the printer's data stream.
 
     The PT-210 firmware usually expects GB2312/GBK (Chinese) for native text
-    output, but plain ASCII also works with ``"ascii"`` or ``"utf-8"``. When
-    the chosen codec cannot represent a character (``UnicodeEncodeError``)
-    or is unknown to Python (``LookupError``) the function falls back to
-    UTF-8 with ``errors="replace"`` so callers never receive an exception.
+    output, but plain ASCII also works with ``"ascii"`` or ``"utf-8"``.
+    Callers never receive an exception:
+
+    * Characters the chosen codec cannot represent are replaced with ``?``
+      one by one and a warning is logged. The rest of the string is still
+      encoded with the requested codec — UTF-8 bytes would be read by the
+      printer as garbage double-byte characters.
+    * An unknown codec name (``LookupError``) falls back to UTF-8 with
+      ``errors="replace"``.
+
+    For text that must survive intact, use
+    :meth:`~goojprt.printer.GoojPrtPT210.print_text_image` instead.
 
     :param text: Input string.
     :param encoding: Name of the Python codec to try first, e.g.
@@ -46,8 +62,17 @@ def text_to_bytes(text: str, encoding: str = "gb2312") -> bytes:
     """
     try:
         return text.encode(encoding)
-    except (UnicodeEncodeError, LookupError):
+    except LookupError:
         return text.encode("utf-8", errors="replace")
+    except UnicodeEncodeError as exc:
+        # Log only the offending character, never the text: it may be a
+        # password or other data that must not end up in log files.
+        log.warning(
+            "Character %r (and possibly others) cannot be encoded as %s and "
+            "was replaced with '?'; use print_text_image() for full Unicode.",
+            exc.object[exc.start:exc.end], encoding,
+        )
+        return text.encode(encoding, errors="replace")
 
 
 def find_system_font() -> str | None:

@@ -62,22 +62,82 @@ def cut() -> bytes:
     return bytes([0x1D, 0x56, 0x41, 0x00])
 
 
-def charset(cp: CodePage) -> bytes:
+def charset(cp: "CodePage | int") -> bytes:
     """``ESC t n`` — select code page for native ESC/POS text output."""
     return bytes([0x1B, 0x74, int(cp)])
+
+
+def chinese_mode(enabled: bool) -> bytes:
+    """``FS &`` / ``FS .`` — enter or cancel the double-byte (Chinese) mode.
+
+    Many low-cost printers boot in GB18030 mode, where a byte ≥ 0x80 is the
+    first half of a two-byte character. Single-byte code pages selected
+    with :func:`charset` may only print correctly after the mode has been
+    cancelled with ``FS .``. Printers without a Chinese font ignore the
+    command.
+    """
+    return bytes([0x1C, 0x26 if enabled else 0x2E])
+
+
+def status_request(n: int) -> bytes:
+    """``DLE EOT n`` — real-time status request (``n`` = 1–4).
+
+    ``1`` printer, ``2`` offline cause, ``3`` error cause, ``4`` roll paper
+    sensor. The answer is one byte; see :mod:`goojprt.status`.
+    """
+    return bytes([0x10, 0x04, n])
+
+
+def info_request(n: int) -> bytes:
+    """``GS I n`` — printer identification request.
+
+    Epson numbering: ``1`` model id, ``2`` type id, ``3`` ROM version id.
+    """
+    return bytes([0x1D, 0x49, n])
+
+
+#: Named heating times for :func:`resolve_density` / ``set_density``.
+#: Uncalibrated starting points around the documented factory default of
+#: ≈ 80, not measured values — tune them on your unit and paper.
+DENSITY_PRESETS: dict[str, int] = {"light": 60, "normal": 80, "dark": 120}
+
+
+def resolve_density(level: "str | int") -> int:
+    """Turn a density preset name or a raw heating time into a heating time.
+
+    :param level: ``"light"``, ``"normal"``, ``"dark"`` (see
+        :data:`DENSITY_PRESETS`) or an integer 0–255.
+    :raises ValueError: For an unknown name or an out-of-range number.
+    """
+    if isinstance(level, bool):
+        raise ValueError(f"invalid density {level!r}")
+    if isinstance(level, int):
+        if not 0 <= level <= 255:
+            raise ValueError(f"density {level} is outside 0-255")
+        return level
+    if isinstance(level, str) and level.lower() in DENSITY_PRESETS:
+        return DENSITY_PRESETS[level.lower()]
+    raise ValueError(
+        f"unknown density {level!r}; use {', '.join(DENSITY_PRESETS)} or a number 0-255"
+    )
 
 
 def energy(dots: int = 7, heating: int = 120, interval: int = 2) -> bytes:
     """``ESC 7 n1 n2 n3`` — configure thermal head heating parameters.
 
-    :param dots: Maximum number of simultaneously heated dots, 0–7.
+    :param dots: Maximum number of simultaneously heated dots (``n1``).
         Higher values print faster but draw more current.
-    :param heating: Heating time, 0–255. Higher values produce darker
+    :param heating: Heating time (``n2``). Higher values produce darker
         output (the factory default is ≈ 80).
-    :param interval: Heating interval, 0–255. Lower values print faster
+    :param interval: Heating interval (``n3``). Lower values print faster
         (the factory default is ≈ 2).
+    :raises ValueError: When a parameter is outside 0–255 (it used to wrap
+        around silently).
     """
-    return bytes([0x1B, 0x37, dots & 0xFF, heating & 0xFF, interval & 0xFF])
+    for name, value in (("dots", dots), ("heating", heating), ("interval", interval)):
+        if not 0 <= value <= 255:
+            raise ValueError(f"{name} must be within 0-255, got {value}")
+    return bytes([0x1B, 0x37, dots, heating, interval])
 
 
 def font(font_b: bool = False) -> bytes:

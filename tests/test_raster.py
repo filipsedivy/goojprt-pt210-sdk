@@ -94,3 +94,40 @@ class TestPadImageToPaperWidth:
         img = make_image(width=PAPER_WIDTH_PX + 10, height=5)
         result = pad_image_to_paper_width(img, Align.LEFT)
         assert result is img
+
+class TestPackBits:
+    """``_pack_bits`` turns PIL polarity (1 = white) into ESC/POS polarity (1 = black)."""
+
+    def test_leftmost_pixel_is_the_most_significant_bit(self):
+        from goojprt.raster import _pack_bits
+
+        img = Image.new("1", (16, 1), 1)
+        img.putpixel((0, 0), 0)    # black, leftmost
+        img.putpixel((15, 0), 0)   # black, rightmost
+        assert _pack_bits(img) == bytes([0b10000000, 0b00000001])
+
+    def test_all_black_and_all_white(self):
+        from goojprt.raster import _pack_bits
+
+        assert _pack_bits(Image.new("1", (8, 2), 0)) == b"\xff\xff"
+        assert _pack_bits(Image.new("1", (8, 2), 1)) == b"\x00\x00"
+
+    def test_width_not_multiple_of_eight_is_padded_with_white(self):
+        from goojprt.raster import _pack_bits
+
+        img = Image.new("1", (10, 1), 0)  # ten black pixels
+        assert _pack_bits(img) == bytes([0xFF, 0b11000000])  # padding bits stay white
+
+    def test_rows_stay_in_order(self):
+        from goojprt.raster import _pack_bits
+
+        img = Image.new("1", (8, 2), 1)
+        img.putpixel((0, 1), 0)
+        assert _pack_bits(img) == bytes([0x00, 0x80])
+
+    def test_does_not_need_numpy(self, monkeypatch):
+        import sys
+        from goojprt.raster import image_to_raster
+
+        monkeypatch.setitem(sys.modules, "numpy", None)  # import numpy -> ImportError
+        assert image_to_raster(Image.new("L", (384, 4), 0))[:4] == GS_V_0_HEADER

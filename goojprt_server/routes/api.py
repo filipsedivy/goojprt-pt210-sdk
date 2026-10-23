@@ -6,7 +6,9 @@ import base64
 import logging
 import time
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from typing import Literal
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from goojprt_server import __version__ as server_version
@@ -117,39 +119,56 @@ async def get_job(job_id: str, request: Request):
     )
 
 
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+class ImageForm:
+    """The multipart fields shared by ``/print/image`` and ``/preview/image``."""
+
+    def __init__(
+        self,
+        rotate: int = Form(0),
+        crop_x: float = Form(0.0),
+        crop_y: float = Form(0.0),
+        crop_w: float = Form(1.0),
+        crop_h: float = Form(1.0),
+        brightness: float = Form(1.0),
+        contrast: float = Form(1.0),
+        threshold: int = Form(128),
+        dither: bool = Form(True),
+        scale: float = Form(1.0),
+        fit: Literal["none", "shrink", "width"] = Form("shrink"),
+        align: str = Form("center"),
+        feed_after: int = Form(0),
+    ) -> None:
+        self.fields = {
+            "rotate": rotate,
+            "crop": (crop_x, crop_y, crop_w, crop_h),
+            "brightness": brightness,
+            "contrast": contrast,
+            "threshold": threshold,
+            "dither": dither,
+            "scale": scale,
+            "fit": fit,
+            "align": align,
+            "feed_after": feed_after,
+        }
+
+    async def payload(self, file: UploadFile) -> dict:
+        """Read the upload (at most 10 MB) into an ``image`` job payload."""
+        raw = await file.read(MAX_IMAGE_BYTES + 1)
+        if len(raw) > MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=413, detail={"error": "image too large (max 10 MB)"})
+        return {"image_b64": base64.b64encode(raw).decode(), **self.fields}
+
+
 @router.post("/print/image", status_code=202, response_model=JobAcceptedResponse)
 async def print_image(
     request: Request,
     file: UploadFile = File(...),
-    rotate: int = Form(0),
-    crop_x: float = Form(0.0),
-    crop_y: float = Form(0.0),
-    crop_w: float = Form(1.0),
-    crop_h: float = Form(1.0),
-    brightness: float = Form(1.0),
-    contrast: float = Form(1.0),
-    threshold: int = Form(128),
-    dither: bool = Form(True),
-    scale: float = Form(1.0),
-    align: str = Form("center"),
-    feed_after: int = Form(0),
+    form: ImageForm = Depends(),
 ) -> JobAcceptedResponse:
-    raw = await file.read()
-    if len(raw) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail={"error": "image too large (max 10 MB)"})
-    payload = {
-        "image_b64": base64.b64encode(raw).decode(),
-        "rotate": rotate,
-        "crop": (crop_x, crop_y, crop_w, crop_h),
-        "brightness": brightness,
-        "contrast": contrast,
-        "threshold": threshold,
-        "dither": dither,
-        "scale": scale,
-        "align": align,
-        "feed_after": feed_after,
-    }
-    return _enqueue(_qs(request), "image", payload)
+    return _enqueue(_qs(request), "image", await form.payload(file))
 
 
 @router.get("/version", response_model=VersionResponse)

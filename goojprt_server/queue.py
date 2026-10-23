@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-JobType = Literal["text", "qr", "pdf417", "feed"]
+JobType = Literal["text", "qr", "pdf417", "feed", "image", "ekg", "grid"]
 JobStatus = Literal["queued", "running", "done", "failed"]
 
 

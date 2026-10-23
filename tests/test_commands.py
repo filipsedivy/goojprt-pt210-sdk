@@ -169,3 +169,22 @@ def test_build_qr_block_ends_with_newline():
 def test_build_qr_block_contains_data():
     result = build_qr_block("mydata")
     assert b"mydata" in result
+
+# ── TextSize follows the Epson GS ! layout (bits 4-6 width, bits 0-2 height) ──
+
+@pytest.mark.parametrize("size, width, height", [
+    (TextSize.NORMAL, 1, 1),
+    (TextSize.DOUBLE_HEIGHT, 1, 2),
+    (TextSize.DOUBLE_WIDTH, 2, 1),
+    (TextSize.DOUBLE_BOTH, 2, 2),
+])
+def test_text_size_multipliers_match_the_names(size, width, height):
+    n = text_size(size)[2]
+    assert ((n >> 4) & 0x07) + 1 == width
+    assert (n & 0x07) + 1 == height
+
+
+def test_text_size_wire_values():
+    assert text_size(TextSize.DOUBLE_HEIGHT) == b"\x1d\x21\x01"
+    assert text_size(TextSize.DOUBLE_WIDTH) == b"\x1d\x21\x10"
+    assert text_size(TextSize.DOUBLE_BOTH) == b"\x1d\x21\x11"

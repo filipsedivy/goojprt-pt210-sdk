@@ -35,6 +35,9 @@ class FakePrinter:
     async def initialize(self) -> None:
         self.calls.append(("initialize", {}))
 
+    async def apply_profile(self, profile) -> None:
+        self.calls.append(("apply_profile", {"profile": profile}))
+
     def _maybe_fail(self, method: str, kwargs: dict) -> None:
         if self._failures_used < self.fail_n_times:
             self._failures_used += 1
@@ -45,6 +48,10 @@ class FakePrinter:
     async def print_text(self, **kwargs) -> None:
         self._maybe_fail("print_text", kwargs)
         self.calls.append(("print_text", kwargs))
+
+    async def print_text_auto(self, **kwargs) -> None:
+        self._maybe_fail("print_text_auto", kwargs)
+        self.calls.append(("print_text_auto", kwargs))
 
     async def print_text_image(self, **kwargs) -> None:
         self._maybe_fail("print_text_image", kwargs)

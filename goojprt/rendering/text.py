@@ -5,6 +5,47 @@ from goojprt.encoding import find_system_font
 from goojprt.enums import Align
 
 
+def _fits(draw, text: str, font, max_width: float) -> bool:
+    """Whether ``text`` drawn at the left margin ends inside ``max_width``.
+
+    Uses the same ink box as the layout code below, so a line that used to
+    fit is never wrapped.
+    """
+    return draw.textbbox((0, 0), text or " ", font=font)[2] <= max_width
+
+
+def _wrap_line(draw, line: str, font, max_width: float) -> list[str]:
+    """Split one logical line into pieces that fit ``max_width``.
+
+    Lines that already fit are returned untouched. Longer ones are broken at
+    spaces; a single word that is wider than a whole line is broken between
+    characters, always taking at least one character so the loop ends.
+    """
+    if _fits(draw, line, font, max_width):
+        return [line]
+
+    pieces: list[str] = []
+    current = ""
+    for word in line.split(" "):
+        candidate = f"{current} {word}" if current else word
+        if _fits(draw, candidate, font, max_width):
+            current = candidate
+            continue
+        if current:
+            pieces.append(current)
+            current = ""
+        while not _fits(draw, word, font, max_width):
+            cut = len(word)
+            while cut > 1 and not _fits(draw, word[:cut], font, max_width):
+                cut -= 1
+            pieces.append(word[:cut])
+            word = word[cut:]
+        current = word
+    if current:
+        pieces.append(current)
+    return pieces or [""]
+
+
 def render_text_image(
     text: str,
     font_size: int = 24,
@@ -19,6 +60,7 @@ def render_text_image(
     sharpen_radius: float = 1.5,
     sharpen_percent: int = 180,
     sharpen_threshold: int = 2,
+    wrap: bool = True,
 ):
     """Render a multi-line string as a 1-bit image ready for the print head.
 
@@ -61,6 +103,10 @@ def render_text_image(
     :param sharpen_percent: Unsharp-mask intensity in percent.
     :param sharpen_threshold: Minimum brightness delta that triggers
         sharpening.
+    :param wrap: Word-wrap lines that are wider than the paper (words longer
+        than a line are broken between characters). With ``False`` such
+        lines run off the paper edge and are cut off. Lines that fit are
+        never changed.
     :returns: PIL image in mode ``"1"`` with width
         :data:`~goojprt.constants.PAPER_WIDTH_PX`.
     """
@@ -77,14 +123,17 @@ def render_text_image(
     except (OSError, IOError):
         font = ImageFont.load_default()
 
+    pad = padding * ss
     lines = text.splitlines() or [""]
     probe_draw = ImageDraw.Draw(PILImage.new("L", (1, 1)))
+    if wrap:
+        max_width = render_width - 2 * pad
+        lines = [piece for line in lines for piece in _wrap_line(probe_draw, line, font, max_width)]
     line_dims: list[tuple[int, int]] = []
     for line in lines:
         bb = probe_draw.textbbox((0, 0), line or " ", font=font)
         line_dims.append((int(bb[2] - bb[0]), int(bb[3] - bb[1])))
 
-    pad = padding * ss
     sp  = line_spacing * ss
     render_height = sum(h for _, h in line_dims) + sp * (len(lines) - 1) + 2 * pad
 

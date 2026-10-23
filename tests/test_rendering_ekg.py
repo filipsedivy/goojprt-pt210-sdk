@@ -42,3 +42,19 @@ class TestRenderEkg:
         img = render_ekg(beats=6)
         assert img.mode == "1"
         assert img.width == PAPER_WIDTH_PX
+
+
+def test_renders_without_numpy(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "numpy", None)  # import numpy -> ImportError
+    assert render_ekg().mode == "1"
+    assert render_ekg(portrait=True, beats=2, px_per_beat=50).mode == "1"
+
+
+def test_waveform_peaks_at_the_r_wave():
+    from goojprt.rendering.ekg import _signal
+
+    samples = {t / 100: _signal(t / 100) for t in range(101)}
+    assert max(samples, key=samples.get) == pytest.approx(0.27, abs=0.01)
+    assert min(samples.values()) < 0  # Q / S dips go below the baseline

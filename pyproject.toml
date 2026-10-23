@@ -52,7 +52,6 @@ testpaths = ["tests"]
 dev = [
     "basedpyright>=1.39.2",
     "hatch-vcs>=0.5.0",
-    "numpy>=2.4.4",
 ]
 
 [tool.basedpyright]

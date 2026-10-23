@@ -23,13 +23,19 @@ class TextSize(IntEnum):
     """Character size multiplier, encoded as a bit mask for ``GS ! n``.
 
     The high nibble encodes the horizontal multiplier and the low nibble
-    encodes the vertical multiplier (``0`` = 1×, ``1`` = 2×, ``2`` = 3×, …).
+    encodes the vertical multiplier (``0`` = 1×, ``1`` = 2×, ``2`` = 3×, …),
+    as defined by the Epson ESC/POS reference.
+
+    .. versionchanged:: unreleased
+        ``DOUBLE_HEIGHT``, ``DOUBLE_WIDTH`` and ``DOUBLE_BOTH`` now do what
+        their names say. Earlier releases shipped ``0x11`` (2× wide *and*
+        2× tall), ``0x20`` (3× wide) and ``0x31`` (4× wide, 2× tall).
     """
 
     NORMAL = 0x00
-    DOUBLE_HEIGHT = 0x11
-    DOUBLE_WIDTH = 0x20
-    DOUBLE_BOTH = 0x31
+    DOUBLE_HEIGHT = 0x01
+    DOUBLE_WIDTH = 0x10
+    DOUBLE_BOTH = 0x11
 
 
 class CodePage(IntEnum):
@@ -47,3 +53,14 @@ class CodePage(IntEnum):
     WPC1250 = 16    # Windows Central European, includes Czech diacritics
     PC866 = 17      # Cyrillic
     PC858 = 19      # Multilingual Latin-1 with Euro sign
+    #: Windows-1250 at the slot the common ESC/POS tables use for it
+    #: (escpos-printer-db). Slot 16 above is Windows-1252 in those tables, so
+    #: which of the two really is CP1250 depends on the firmware — run
+    #: ``goojprt <addr> --test`` to find out.
+    WPC1250_STD = 45
+    #: The following numbers follow the common ESC/POS tables
+    #: (escpos-printer-db) and are untested on this SDK's hardware.
+    CP775 = 33          # Baltic
+    ISO8859_2 = 39      # Latin-2 (Central European), includes all Czech letters
+    ISO8859_15 = 40     # Latin-9 (Western European with Euro)
+    WPC1251 = 46        # Windows Cyrillic

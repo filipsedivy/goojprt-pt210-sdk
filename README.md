@@ -117,6 +117,16 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+The session helper connects, initialises and always disconnects, also when printing fails:
+
+```python
+async with GoojPrtPT210.ble("XX:XX:XX:XX:XX:XX") as printer:
+    await printer.print_text("Hello, world!")
+    await printer.feed(3)
+```
+
+(`GoojPrtPT210.spp(...)` does the same for classic Bluetooth with a plain `with`.)
+
 ### Print bitmap text (full Unicode / diacritics)
 
 ```python
@@ -125,6 +135,29 @@ await printer.print_text_image(
     font_size=28,
 )
 ```
+
+Lines wider than the paper are word-wrapped (`wrap=False` to turn that off).
+
+### Print an image
+
+```python
+from PIL import Image
+from goojprt.rendering.image_print import prepare_image
+
+await printer.print_image(prepare_image(Image.open("photo.jpg")))        # scaled down to the paper
+await printer.print_image(prepare_image(Image.open("logo.png"), fit="width", dither=False))
+```
+
+`fit="shrink"` (the default) never makes the picture wider than the paper, `"width"` fills the paper, `"none"` keeps the source size and cuts off whatever is wider.
+
+### Print darker or lighter
+
+```python
+await printer.initialize()
+await printer.set_density("dark")        # or "light", "normal", or a heating time 0-255
+```
+
+The presets are uncalibrated starting points, and whether a given unit honours `ESC 7` has not been verified.
 
 ### Print a QR code
 
@@ -143,11 +176,22 @@ await printer.print_pdf417("1234567890ABCDEF", columns=5, scale=2)
 ## CLI
 
 ```bash
+# Find the printer (on macOS the "address" is a UUID), then keep it in the environment
+goojprt --scan
+export GOOJPRT_ADDRESS=XX:XX:XX:XX:XX:XX      # optional: the address argument can then be left out
+
 # BLE demo print
 goojprt XX:XX:XX:XX:XX:XX
 
+# Native text with Czech diacritics: calibrate once, then print (see "Native Czech" below)
+goojprt XX:XX:XX:XX:XX:XX --calibrate
+goojprt XX:XX:XX:XX:XX:XX --print-text "Příliš žluťoučký kůň"
+
 # Bitmap text with antialiasing
 goojprt XX:XX:XX:XX:XX:XX --print-image "Příliš žluťoučký kůň"
+
+# An image file, scaled down to the paper, printed darker
+goojprt XX:XX:XX:XX:XX:XX --print-file photo.jpg --density dark
 
 # PDF417 barcode
 goojprt XX:XX:XX:XX:XX:XX --pdf417 "data"
@@ -161,6 +205,25 @@ goojprt XX:XX:XX:XX:XX:XX --test
 
 Run `goojprt --help` for all options.
 
+### Preview without a printer
+
+`--preview OUT.png` renders `--template`, `--print-image`, `--print-file` and `--pdf417` into a PNG instead of printing, so layouts can be built without wasting paper (and without an address):
+
+```bash
+goojprt --template examples/receipt.toml --var shop="Corner Shop" --var total=12.50 --preview receipt.png
+```
+
+Everything drawn as a bitmap appears exactly as it would print — the preview is checked pixel for pixel against the real raster stream. Native ESC/POS text (`text` items, `print_text`), separator lines and QR codes are produced by the printer firmware and cannot be rendered; they show up as dashed notes with their content, and the command reports how many there were.
+
+In Python, `printer.connect_preview()` attaches the same recorder to any facade, and the server offers `POST /api/preview/{text,pdf417,ekg,grid,image}` which return the PNG (header `X-Preview-Native-Commands` counts the unrenderable parts). Previews never touch the print queue or the printer.
+
+```python
+printer = GoojPrtPT210()
+preview = printer.connect_preview()
+await printer.print_text_image("Příliš žluťoučký kůň")
+preview.save("preview.png")
+```
+
 ---
 
 ## Two text paths
@@ -171,6 +234,35 @@ Run `goojprt --help` for all options.
 | Bitmap (Pillow) | `print_text_image` | Always correct | Slower |
 
 If diacritics appear as garbage, switch to `print_text_image`. Use `--test` (or `probe_charsets()`) to test your specific unit.
+
+Characters that the chosen `encoding` cannot represent are printed as `?` (and a warning is logged) rather than being sent as UTF-8, which the printer would render as garbage.
+
+### Native Czech (or any language) without bitmaps
+
+Bitmap text always works, but native text is faster and much smaller on the wire. Which `ESC t` table prints your language correctly differs from unit to unit, and many cheap printers boot in a double-byte (Chinese) mode in which bytes ≥ 0x80 are half of a character, so a table can look wrong even after `ESC t`. Find the right combination once:
+
+```bash
+goojprt XX:XX:XX:XX:XX:XX --calibrate
+```
+
+It prints the Czech test sentence once per candidate — tables 18 (cp852), 45 (cp1250), 39 (iso8859-2) and 16, each with and without `FS .` (cancel Chinese mode) — labelled A–H, asks which line shows the sentence exactly and saves the answer (`--calibrate-pick LETTER` saves without printing, `--calibrate-text` uses your own sentence). After that:
+
+```bash
+goojprt XX:XX:XX:XX:XX:XX --print-text "Příliš žluťoučký kůň úpěl ďábelské ódy"
+goojprt XX:XX:XX:XX:XX:XX --template examples/native-text-czech.toml
+```
+
+Both use the saved profile on their own (`--profile FILE` / `--no-profile` override it; the file lives in `$GOOJPRT_PROFILE` or `~/.config/goojprt/profile.toml`). Each line is printed natively when the table can show it and rendered as a bitmap only when it cannot (a euro sign in cp852), so nothing ever comes out as garbage.
+
+In Python the same is three lines, and `print_text` then needs no `encoding=`:
+
+```python
+await printer.use_codepage(CodePage.PC852)              # FS . + ESC t 18, remembers the codec
+await printer.print_text("Příliš žluťoučký kůň")        # native, cp852
+await printer.print_text_auto("Cena 5 € za kus")        # native where possible, bitmap for the euro line
+```
+
+The profile is sent again with every `initialize()` and after reconnects. Templates have a `codepage` item for the same thing, text items take `auto = true`, the server's text jobs take `"auto": true` and use a profile given with `--profile` / `GOOJPRT_PROFILE`. If nothing looks right, `print_text_image` always works.
 
 ---
 
@@ -194,7 +286,42 @@ type = "feed"
 lines = 4
 ```
 
-Variables like `{{date}}`, `{{time}}`, `{{expiry_7d}}` are built-in. Pass custom variables with `--var KEY=VALUE`.
+Variables like `{{date}}`, `{{time}}`, `{{expire_24h}}`, `{{password_12}}` are built-in. Pass custom variables with `--var KEY=VALUE`.
+
+Item types: `text`, `text_image`, `image`, `qr`, `pdf417`, `grid`, `ekg`, `line`, `feed`, `cut`, `charset`, `chinese_mode`, `codepage`, `density`. A `codepage` item (`code_page = "PC852"`) switches to a native code page and makes `text` items encode for it. An `image` item (`path` is relative to the template file, plus `fit`, `scale`, `align`, `dither`, …) prints a logo; it is opened before the printer is touched, so a missing file fails before any paper is used. Ready-to-run samples are in [`examples/`](examples/): a receipt with a logo, a guest Wi-Fi voucher with a QR code, and a native-text experiment.
+
+---
+
+## How the printer talks
+
+- **BLE:** the primary UUIDs (`49535343-…`) are Microchip's *Transparent UART* service (BM70/RN4870 modules): GATT writes go to the module, which forwards them over a UART to the printer MCU. There is no flow control, so the SDK writes in small chunks with a pause in between and waits after every raster strip. Some firmware uses the `0000ff00` service family instead; both are tried.
+- **Protocol:** plain ESC/POS — `ESC @`, `GS ! n`, `GS ( k` (QR), `GS v 0` (raster, sent in 24-row strips), `DLE EOT n` / `GS I n` for status and identification (answers arrive on the notify characteristic, if the unit has one). See `goojprt.status` for decoding the status bytes.
+- **Concurrency:** writes are serialised, so a status query from another task can never land in the middle of a print job.
+
+Observed on one unit (`PT-210_DF5B`: manufacturer GEZHI, model PT2D-V1.0, firmware PT-210-8008) — other units or firmware may differ:
+
+- It lists five services, among them both UUID families (`49535343-fe7d-…` and `0000ff00-…`). Write to `49535343-8841-…`; the answers to status and identification queries come back on `49535343-1e4d-…`, the notify characteristic *of the same service*, within 25–45 ms. The `0000ff01` notify characteristic of the other family stays silent, which is why the SDK pairs the notify characteristic with the write characteristic's service.
+- `DLE EOT 1–4` answer one byte each (`0x16` online, `0x12` for "no cover / paper / error"); `GS r 1` and `ESC v` answer too. `GS I 1–3` return single ID bytes (`0x60`, `0x03`, `0x08`), `GS I 65–68` return text (firmware version, manufacturer, model, serial number), `GS I 97` returns `14 00 00 0f`. Nothing else in `GS I 0–127` answers.
+- The negotiated write-without-response payload is 237 bytes, so the 182/192-byte chunks fit. On subscribing, `0000ff03` announces `01 04` and `02 b6 00` (0xB6 = 182) and is silent while printing, so it is not a flow-control channel; pacing stays open-loop. There is no Battery service.
+
+The pacing is conservative. If your unit keeps up, print faster by lowering the pause (and raise it again if you see missing lines):
+
+```python
+await printer.connect_ble("XX:XX:XX:XX:XX:XX", chunk_delay=0.02)
+```
+
+---
+
+## Upgrading
+
+- `TextSize.DOUBLE_HEIGHT`, `DOUBLE_WIDTH` and `DOUBLE_BOTH` now produce 1×2, 2×1 and 2×2 characters as their names say. They used to send `0x11`, `0x20` and `0x31` (2×2, 3×1, 4×2), so existing output with `size=` will look different.
+- `print_text` / `text_to_bytes` replace unencodable characters with `?` instead of switching the whole string to UTF-8.
+- Images wider than the paper are now scaled down (`fit="shrink"`) instead of having their right part cut off when printed. Anything that already fitted — including callers that compensate with `scale` ≈ 384 / width — prints exactly as before; `fit="none"` restores the old behaviour for wide images.
+- Bitmap text (`print_text_image`, `text_image` items, `render_text_image`) word-wraps lines wider than the paper instead of running them off the edge. Lines that fit are unchanged; pass `wrap=False` for the old behaviour.
+- `print_text()` encodes with the codec of the active code page (after `set_charset`, `apply_profile` or `use_codepage`) when no `encoding=` is given; without one it is GB2312 as before. `text` template items and the server's text jobs follow the same rule, and `initialize()` re-sends an applied profile.
+- The BLE transport subscribes to the notify characteristic of the *write characteristic's service*. Units that expose both UUID families used to be subscribed to a characteristic that never answers, so status, battery and identification queries returned nothing.
+- `commands.energy()` raises `ValueError` outside 0–255 instead of wrapping the value around.
+- `numpy` is no longer needed: bitmap printing used to fail with `ModuleNotFoundError` on a plain `pip install`.
 
 ---
 

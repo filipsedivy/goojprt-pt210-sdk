@@ -1,4 +1,4 @@
-"""Tests for row-aligned chunking in BLE and SPP transports."""
+"""Tests for chunking and pacing in BLE and SPP transports."""
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -119,7 +119,7 @@ def test_spp_chunk_size_raster_is_multiple_of_48():
 def test_spp_write_raster_strip_chunks_at_192():
     t = _make_connected_spp()
     sent_chunks = []
-    t._sock.send = lambda data: sent_chunks.append(bytes(data))
+    t._sock.sendall = lambda data: sent_chunks.append(bytes(data))
 
     data = bytes(384)
     with patch("time.sleep"):
@@ -133,7 +133,7 @@ def test_spp_write_raster_strip_chunks_at_192():
 def test_spp_write_raster_strip_sends_all_bytes():
     t = _make_connected_spp()
     received = bytearray()
-    t._sock.send = lambda data: received.extend(data)
+    t._sock.sendall = lambda data: received.extend(data)
 
     data = bytes(range(200))
     with patch("time.sleep"):
@@ -152,7 +152,7 @@ def test_spp_write_raster_strip_throttles_after_chunks():
     """Verify post-strip sleep proportional to row count."""
     t = _make_connected_spp()
     sent_chunks = []
-    t._sock.send = lambda data: sent_chunks.append(bytes(data))
+    t._sock.sendall = lambda data: sent_chunks.append(bytes(data))
 
     sleep_calls = []
 
@@ -176,7 +176,7 @@ def test_spp_write_raster_strip_throttle_scales_with_rows():
     """Verify post-strip sleep scales when rows > 25."""
     t = _make_connected_spp()
     sent_chunks = []
-    t._sock.send = lambda data: sent_chunks.append(bytes(data))
+    t._sock.sendall = lambda data: sent_chunks.append(bytes(data))
 
     sleep_calls = []
 

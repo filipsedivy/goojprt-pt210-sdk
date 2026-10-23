@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     no_dashboard: bool = False
     log_file: Path | None = None
     no_log_file: bool = False
+    #: Native text profile file (``goojprt --calibrate`` writes one); the default
+    #: location is used when unset. ``no_profile`` ignores any profile.
+    profile: Path | None = None
+    no_profile: bool = False
 
     @field_validator("cors_origins", mode="before")
     @classmethod
